@@ -1,0 +1,42 @@
+# baima tongling ruomaoshan
+# topic0: &topic0 "/front/rslidar_points"
+# topic1: &topic1 "/front_left/rslidar_points"
+# topic2: &topic2 "/front_right/rslidar_points"
+# topic3: &topic3 "/back/rslidar_points"
+
+
+# chongqing
+topic0: &topic0 "/front_lidar"
+topic1: &topic1 "/front_left_lidar"
+topic2: &topic2 "/front_right_lidar"
+topic3: &topic3 "/back_lidar"
+
+bag0: &bag0 "lidar_front.bag"
+bag1: &bag1 "lidar_back.bag"
+
+
+lidar_topics: &lidar_topics_all [*topic0, *topic1, *topic2, *topic3]
+bag_files: [*bag0, *bag1]
+
+input_mat:
+  [ 
+    {
+      format: 0, # 0: mat ; 1: euler
+      mat: [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+      ],
+      euler: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    }
+  ]
+out_format:
+  mat_list: [
+    # {name: "f" , mat_lst: ["input0", *topic0]},
+    # ["input1", *topic0, *topic1]
+  ]
+
+
+
+      
