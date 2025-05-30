@@ -12,9 +12,10 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   rosbag
   std_msgs
+  dynamic_reconfigure
 )
-
 find_package(Eigen3 REQUIRED)
+set(PCL_DIR "/usr/lib/x86_64-linux-gnu/cmake/pcl")
 find_package(PCL REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(GTSAM REQUIRED)
@@ -103,6 +104,9 @@ add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/third_party/patchworkpp)
 #   cfg/DynReconf1.cfg
 #   cfg/DynReconf2.cfg
 # )
+generate_dynamic_reconfigure_options(
+        config/ml_calib.cfg
+        )
 
 ###################################
 ## catkin specific configuration ##
@@ -126,10 +130,10 @@ catkin_package(
 
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
-include_directories(
-  ./include
-  ${catkin_INCLUDE_DIRS}
-)
+# include_directories(
+#   ./include
+#   ${catkin_INCLUDE_DIRS}
+# )
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
@@ -145,7 +149,8 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(${PROJECT_NAME}_node src/app/multi_scene_calib.cpp 
-               src/multi_lidar_calibration/ml_calib.cpp)
+               src/multi_lidar_calibration/ml_calib.cpp
+               ${ML_CALIB_SOURCES})
 
 target_link_libraries(${PROJECT_NAME}_node PUBLIC 
                       ${catkin_LIBRARIES}
@@ -157,6 +162,8 @@ target_link_libraries(${PROJECT_NAME}_node PUBLIC
                       )
 
 target_include_directories(${PROJECT_NAME}_node PUBLIC 
+                      ${catkin_INCLUDE_DIRS}
+                      ${CMAKE_CURRENT_LIST_DIR}/include
                       ${PCL_INCLUDE_DIRS}
                       ${GTSAM_INCLUDE_DIR}
                       )

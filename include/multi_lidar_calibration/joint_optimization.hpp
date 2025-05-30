@@ -13,6 +13,7 @@ class LidarJointOptFactor : public gtsam::NoiseModelFactor2<gtsam::Pose3, gtsam:
 {
 private:
     Eigen::Vector3d p0_, p1_, n_;
+    double factor_weight_;
     bool use_normal_;
 public:
     LidarJointOptFactor(gtsam::Key key0, 
@@ -21,8 +22,9 @@ public:
                         const Eigen::Vector3d& p0, 
                         const Eigen::Vector3d& p1, 
                         const  Eigen::Vector3d& normal, 
-                        bool use_normal = true)
-        : gtsam::NoiseModelFactor2<gtsam::Pose3, gtsam::Pose3>(model, key0, key1), p0_(p0), p1_(p1), n_(normal), use_normal_(use_normal){}
+                        bool use_normal = true,
+                        const double factor_weight = 1)
+        : gtsam::NoiseModelFactor2<gtsam::Pose3, gtsam::Pose3>(model, key0, key1), p0_(p0), p1_(p1), n_(normal), use_normal_(use_normal), factor_weight_(factor_weight){}
     ~LidarJointOptFactor(){}
 
     gtsam::Vector evaluateError(const gtsam::Pose3& pose0, 
@@ -36,13 +38,13 @@ public:
                     + pose0.translation() - pose1.translation());
             if (H0){
                 Eigen::Matrix<double ,1, 6> jac0;
-                jac0 << - n_.transpose() * gtsam::skewSymmetric(pose0.rotation().matrix() * p0_), 
+                jac0 << - n_.transpose() * pose0.rotation().matrix() * gtsam::skewSymmetric(p0_), 
                     n_.transpose();
                 *H0 = jac0;
             }
             if (H1){
                 Eigen::Matrix<double ,1, 6> jac0;
-                jac0 << n_.transpose() * gtsam::skewSymmetric(pose1.rotation().matrix() * p1_), 
+                jac0 << n_.transpose() * pose1.rotation().matrix() * gtsam::skewSymmetric(p1_), 
                     -n_.transpose();
                 *H1 = jac0;
             }
@@ -51,19 +53,20 @@ public:
                     + pose0.translation() - pose1.translation();
             ret(0) = dist.norm();
 
-            Eigen::Matrix<double, 1, 3> pre_d = (1.0 / (ret(0) + 1e-8)) * dist.transpose();
+            Eigen::Matrix<double, 1, 3> pre_d = (1.0 / (ret(0))) * dist.transpose();
 
             if (H0){
                 Eigen::Matrix<double, 1, 6> jac;
-                jac << pre_d * ( - gtsam::skewSymmetric(pose0.rotation().matrix() * p0_)), (1.0 / ret(0)) * dist.transpose();
+                jac << pre_d * ( - pose0.rotation().matrix() * gtsam::skewSymmetric(p0_)), (1.0 / ret(0)) * dist.transpose();
                 *H0 = jac;
             }
             if (H1){
                 Eigen::Matrix<double, 1, 6> jac;
-                jac << pre_d * (gtsam::skewSymmetric(pose1.rotation().matrix() * p1_)), - (1.0 / ret(0)) * dist.transpose();
+                jac << pre_d * (pose1.rotation().matrix() * gtsam::skewSymmetric(p1_)), - (1.0 / ret(0)) * dist.transpose();
                 *H1 = jac;
             }
         }
+        ret *= factor_weight_;
         return ret;
     }
 };

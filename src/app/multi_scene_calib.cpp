@@ -1,7 +1,19 @@
+#include "multi_lidar_calibration/ml_calib.hpp"
+#include "pcl_conversions/pcl_conversions.h"
+#include "ros/init.h"
 #include "ros/ros.h"
 #include "bag2pcd/bag2pcd.hpp"
+#include <Eigen/src/Core/Matrix.h>
+#include <Eigen/src/Core/util/Constants.h>
+#include <Eigen/src/Geometry/AngleAxis.h>
+#include <Eigen/src/Geometry/Transform.h>
+#include <gtsam/base/Vector.h>
+#include <gtsam/geometry/Pose3.h>
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <pcl/common/io.h>
+#include <pcl/common/transforms.h>
+#include <thread>
 #include <yaml-cpp/yaml.h>
-#include "multi_lidar_calibration/ml_calib.hpp"
 #include <pcl/visualization/cloud_viewer.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/octree/octree_pointcloud.h>
@@ -12,7 +24,12 @@
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/visualization/pcl_visualizer.h>
 #include <sensor_msgs/PointCloud2.h>
-
+#include <unordered_set>
+#include <dynamic_reconfigure/server.h>
+#include <ml_calib/ml_calibConfig.h>
+#include "multi_lidar_calibration/ground_joint_opt.hpp"
+#include "velodyne_pointcloud/point_types.h"
+#include <gtsam/nonlinear/DoglegOptimizer.h>
 
 using PointT = pcl::PointXYZI;
 using PointCloud = pcl::PointCloud<PointT>;
@@ -20,6 +37,9 @@ using CloudPtr = pcl::shared_ptr<PointCloud>;
 using ConstCloudPtr = pcl::shared_ptr<const PointCloud>;
 using OctreeT = pcl::octree::OctreePointCloud<PointT>;
 namespace fs = std::filesystem;
+
+ml_calib::ml_calibConfig ml_calib_config;
+
 
 template<typename PointT>
 double checkPlane(pcl::shared_ptr<const pcl::PointCloud<PointT>> cloud, const pcl::Indices& indices, Eigen::Vector3f& plane_normal)
@@ -167,20 +187,21 @@ void searchInterSection(ConstCloudPtr pcd0,
 }
 
 
-void visualizeIntersection(pcl::IndicedMerge<PointT>& merged_back, pcl::KdTreeFLANN<PointT>& kd_merged_back, std::vector<std::pair<int, int>>& idx_pairs)
+void visualizeIntersection(pcl::IndicedMerge<PointT>& merged_back, pcl::KdTreeFLANN<PointT>& kd_merged_back, std::vector<std::pair<int, int>>& idx_pairs,
+                          const std::string str0, const std::string str1, float threshould)
 {
     pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer("3D Viewer"));
     for (auto [id0, id1] : idx_pairs)
     {
-        int id0_ = merged_back.idxLocal2Global("back", id0);
-        int id1_ = merged_back.idxLocal2Global("left", id1);
+        int id0_ = merged_back.idxLocal2Global(str0, id0);
+        int id1_ = merged_back.idxLocal2Global(str1, id1);
         std::cout << id0 << " " << id1 << std::endl;
         pcl::Indices indices;
         std::vector<float> dists;
-        kd_merged_back.radiusSearch(merged_back.at(id0_), 0.5, indices, dists);
+        kd_merged_back.radiusSearch(merged_back.at(id0_), 0.8, indices, dists);
 
         Eigen::Vector3f normal;
-        if (0.0 < checkPlane<PointT>(merged_back.merged_cloud, indices, normal)){
+        if (threshould < checkPlane<PointT>(merged_back.merged_cloud, indices, normal)){
             pcl::PointXYZ l0_begin;
             pcl::copyPoint<PointT, pcl::PointXYZ>(merged_back.at(id0_), l0_begin);
             Eigen::Vector3f end_val = normal.cast<float>() + l0_begin.getVector3fMap();
@@ -213,6 +234,61 @@ pcl::PointCloud<pcl::PointXYZRGB> colorPointCloud(const pcl::PointCloud<PointT>&
 }
 
 
+
+void segGround(ConstCloudPtr pcd, std::unordered_set<int>& result, float z_threshold = 1)
+{
+    result.clear();
+    patchwork::Params patchwork_parameters;
+    patchwork_parameters.verbose = ml_calib_config.verbose;
+    patchwork_parameters.enable_RNR = ml_calib_config.RNR;
+    patchwork_parameters.enable_RVPF = ml_calib_config.RVPF;
+    patchwork_parameters.enable_TGR  = ml_calib_config.TGR;
+
+    patchwork_parameters.num_iter              = ml_calib_config.num_iter;
+    patchwork_parameters.num_lpr               = ml_calib_config.num_lpr;
+    patchwork_parameters.num_min_pts           = ml_calib_config.num_min_pts;
+    patchwork_parameters.num_zones             = ml_calib_config.num_zones;
+    patchwork_parameters.num_rings_of_interest = ml_calib_config.num_rings_of_interest;
+
+    patchwork_parameters.RNR_ver_angle_thr     = ml_calib_config.RNR_ver_angle_thr;
+    patchwork_parameters.RNR_intensity_thr     = ml_calib_config.RNR_intensity_thr;
+
+    patchwork_parameters.sensor_height         = ml_calib_config.sensor_height;
+    patchwork_parameters.th_seeds              = ml_calib_config.th_seeds;
+    patchwork_parameters.th_dist               = ml_calib_config.th_dist;
+    patchwork_parameters.th_seeds_v            = ml_calib_config.th_seeds_v;
+    patchwork_parameters.th_dist_v             = ml_calib_config.th_dist_v;
+
+    patchwork_parameters.max_range             = ml_calib_config.max_range;
+    patchwork_parameters.min_range             = ml_calib_config.min_range;
+    patchwork_parameters.uprightness_thr       = ml_calib_config.uprightness_thr;
+    patchwork_parameters.adaptive_seed_selection_margin = ml_calib_config.adaptive_seed_selection_margin;
+
+    patchwork_parameters.max_flatness_storage  = ml_calib_config.max_flatness_storage;
+    patchwork_parameters.max_elevation_storage = ml_calib_config.max_elevation_storage;
+
+    patchwork::PatchWorkpp patchworkpp(patchwork_parameters);
+   
+    Eigen::MatrixXf cloud;
+    cloud.resize(pcd->size(), 4);
+    for (int i = 0; i < pcd->size(); i++)
+    {
+        cloud.row(i) << pcd->at(i).x, pcd->at(i).y, pcd->at(i).z, pcd->at(i).intensity;
+    }
+    patchworkpp.estimateGround(cloud);
+    Eigen::VectorXi ground_idx    = patchworkpp.getGroundIndices();
+    Eigen::VectorXi nonground_idx = patchworkpp.getNongroundIndices();
+
+    for (int i = 0; i < ground_idx.size(); i++)
+    {
+        if (pcd->at(ground_idx(i)).z > z_threshold)
+        {
+            continue;
+        }
+        result.insert(ground_idx(i));
+    }
+}
+
 int main(int argc, char* argv[])
 {
     ros::init(argc, argv, "ml_calib");
@@ -228,14 +304,53 @@ int main(int argc, char* argv[])
     ros::Publisher pub_right = nh.advertise<sensor_msgs::PointCloud2>(topic_pub_right, 10);
     ros::Publisher pub_back = nh.advertise<sensor_msgs::PointCloud2>(topic_pub_back, 10);
 
+    std::string topic_pub_groud_front("/ml_calib/groud_front"), topic_pub_groud_back("/ml_calib/groud_back");
+    ros::Publisher pub_groud_front = nh.advertise<sensor_msgs::PointCloud2>(topic_pub_groud_front, 10);
+    ros::Publisher pub_groud_back = nh.advertise<sensor_msgs::PointCloud2>(topic_pub_groud_back, 10);
+
     g3reg_config_path = fs::path(project_path) / "third_party/G3Reg/configs";
     config_url = fs::path(project_path) / "config/multi_scene_calib.yaml";
 
     YAML::Node root = YAML::LoadFile(config_url);
 
-    std::vector<std::string> lidar_topics = root["lidar_topics"].as<std::vector<std::string>>();
+    static const std::map<int, std::vector<std::string>> topic_map = {
+        {0, {"/front_lidar", "/front_left_lidar", "/front_right_lidar", "/back_lidar"}},
+        {1, {"/front/rslidar_points", "/front_left/rslidar_points", "/front_right/rslidar_points", "/back/rslidar_points"}},
+        {2, {"/front_left_lidar", "/front_right_lidar", "/back_lidar"}},
+    };
+
+    int type_code;
+    nh.getParam("type_code", type_code);
+    std::vector<std::string> lidar_topics = topic_map.at(type_code);
 
     std::vector<std::string> bag_file_lst = root["bag_files"].as<std::vector<std::string>>();
+
+    std::vector<double> pre_mat_vec = root["pre_mat"].as<std::vector<double>>();
+    if (pre_mat_vec.size() != 16){
+        std::cout << "Pre-mat size is not 16, please check the config file." << std::endl;
+        exit(0);
+    }
+    Eigen::Matrix4d pre_map = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(pre_mat_vec.data());
+
+
+
+    boost::shared_ptr<dynamic_reconfigure::Server<ml_calib::ml_calibConfig>> server_f(new dynamic_reconfigure::Server<ml_calib::ml_calibConfig>(nh));
+    auto callback_f = [&](ml_calib::ml_calibConfig &config, uint32_t level) {
+        std::cout << "Reconfigure Request: " << std::endl;
+        ml_calib_config = config;
+    };
+    server_f->setCallback(callback_f);
+
+    auto bound_to_mat = [](const Eigen::Vector3d& xyz, const Eigen::Vector3d& rpy) -> Eigen::Affine3d {
+        Eigen::Affine3d mat(Eigen::Affine3d::Identity());
+        mat.translation() = xyz;
+        mat.rotate(Eigen::AngleAxisd(DEG2RAD(rpy.x()), Eigen::Vector3d::UnitX()));
+        mat.rotate(Eigen::AngleAxisd(DEG2RAD(rpy.y()), Eigen::Vector3d::UnitY()));
+        mat.rotate(Eigen::AngleAxisd(DEG2RAD(rpy.z()), Eigen::Vector3d::UnitZ()));
+        return mat;
+    };
+
+
     fs::path bag_path = fs::path(launch_cmd_dir) / fs::path(bag_folder);
 
     std::vector<std::vector<CloudPtr>> pcd_lst;
@@ -247,7 +362,7 @@ int main(int argc, char* argv[])
         if (fs::exists(bag_url)){
             for (const std::string& topic : lidar_topics)
             {
-                std::cout << "Try open bagfile: " << bag_url << std::endl;        
+                std::cout << "Try open bagfile: " << bag_url << " " << topic << std::endl;        
                 std::vector<CloudPtr> pcd;
                 bag2pcd::rosbag2PointCloud<PointT>(bag_url, topic, pcd);
                 bag_clouds.push_back(pcd[0]);
@@ -258,247 +373,1102 @@ int main(int argc, char* argv[])
         }
     }
 
+    Eigen::IOFormat eigen_fmt(-1, 0, ", ", ", \n");
+
+    
+    Eigen::Affine3d mat_front(Eigen::Affine3d::Identity());
+    Eigen::Affine3d mat_left(Eigen::Affine3d::Identity());
+    Eigen::Affine3d mat_right(Eigen::Affine3d::Identity());
+    Eigen::Affine3d mat_back(Eigen::Affine3d::Identity());
 
     pcl::G3Reg<PointT, PointT> reg;
     reg.setG3RegParams(fs::path(g3reg_config_path) / "apollo_lc_bm/fpfh_pagor.yaml");
 
-    CloudPtr front_lidar = pcd_lst[0][0];
-    CloudPtr left_lidar = pcd_lst[0][1];
-    CloudPtr right_lidar = pcd_lst[0][2];
 
-    std::vector<int> indices;
-    pcl::removeNaNFromPointCloud(*front_lidar, *front_lidar, indices);
-    pcl::removeNaNFromPointCloud(*left_lidar, *left_lidar, indices);
-    pcl::removeNaNFromPointCloud(*right_lidar, *right_lidar, indices);
-
-    indices.clear();
-    CloudPtr sectored_left_pcd = pcdSector<PointT>(left_lidar, -180, 0, indices);
-    indices.clear();
-    CloudPtr sectored_right_pcd = pcdSector<PointT>(right_lidar, 0, 180, indices);
-
-    reg.setInputCloud(sectored_left_pcd);
-    reg.setInputTarget(front_lidar);
-    reg.align(*sectored_left_pcd);
-    Eigen::Matrix4f trans_mat_left = reg.getFinalTransformation();
-
-    reg.setInputCloud(sectored_right_pcd);
-    reg.setInputTarget(front_lidar);
-    reg.align(*sectored_right_pcd);
-    Eigen::Matrix4f trans_mat_right = reg.getFinalTransformation();
-
-    pcl::transformPointCloud(*left_lidar, *left_lidar, trans_mat_left);
-    pcl::transformPointCloud(*right_lidar, *right_lidar, trans_mat_right);
-
-    // PointCloud aa;
-    // aa += *right_lidar;
-    // aa += *left_lidar;
-    // aa += *front_lidar;
-    // std::cout << aa.size() << std::endl;
-    // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/prev_merge.pcd", aa);
-    CloudPtr front_merge = pcl::make_shared<PointCloud>();
-    CloudPtr back_merge = pcl::make_shared<PointCloud>();
-
-    Eigen::Affine3d tans_front = groundOptimization(front_lidar);
-    Eigen::Affine3d tans_left = groundOptimization(left_lidar);
-    Eigen::Affine3d tans_right = groundOptimization(right_lidar);
-
-    pcl::transformPointCloud(*right_lidar, *right_lidar, tans_right);
-    pcl::transformPointCloud(*front_lidar, *front_lidar, tans_front);
-    pcl::transformPointCloud(*left_lidar, *left_lidar, tans_left);
-
-    CloudPtr front_lidar1 = pcd_lst[1][0];
-    CloudPtr left_lidar1 = pcd_lst[1][1];
-    CloudPtr right_lidar1 = pcd_lst[1][2];
-    CloudPtr back_lidar1 = pcd_lst[1][3];
-
-    pcl::transformPointCloud(*front_lidar1, *front_lidar1, tans_front);
-    pcl::transformPointCloud(*left_lidar1, *left_lidar1, tans_left * Eigen::Affine3d(trans_mat_left.cast<double>()));
-    pcl::transformPointCloud(*right_lidar1, *right_lidar1, tans_right * Eigen::Affine3d(trans_mat_right.cast<double>()));
+    // std::thread ros_thread();
 
 
-    pcl::IndicedMerge<PointT> merged_back;
-    merged_back.push_back("front", front_lidar1);
-    merged_back.push_back("left", left_lidar1);
-    merged_back.push_back("right", right_lidar1);
-    
+    if (type_code != 2){
+        CloudPtr front_lidar = pcd_lst[0][0];
+        CloudPtr left_lidar = pcd_lst[0][1];
+        CloudPtr right_lidar = pcd_lst[0][2];
+        CloudPtr back_lidar = pcd_lst[0][3];
+        CloudPtr front_lidar1 = pcd_lst[1][0];
+        CloudPtr left_lidar1 = pcd_lst[1][1];
+        CloudPtr right_lidar1 = pcd_lst[1][2];
+        CloudPtr back_lidar1 = pcd_lst[1][3];
 
-    CloudPtr result_pcd = pcl::make_shared<PointCloud>();
-    reg.setInputCloud(back_lidar1);
-    reg.setInputTarget(merged_back.merged_cloud);
-    reg.align(*result_pcd);
-    Eigen::Matrix4f trans_back = reg.getFinalTransformation();
-    pcl::transformPointCloud(*back_lidar1, *back_lidar1, trans_back);
-
-    Eigen::Affine3d trans_back_ground = groundOptimization(back_lidar1);
-
-    pcl::transformPointCloud(*back_lidar1, *back_lidar1, trans_back_ground);
-
-    merged_back.push_back("back", back_lidar1);
-
-
-    auto opt_intersection = [&](){
-
-        gtsam::NonlinearFactorGraph graph;
-        gtsam::Symbol key_pose_front('p', 0);
-        gtsam::Symbol key_pose_left('p', 1);
-        gtsam::Symbol key_pose_right('p', 2);
-        gtsam::Symbol key_pose_back('p', 3);
+        std::vector<int> indices;
+        pcl::removeNaNFromPointCloud(*front_lidar, *front_lidar, indices);
+        pcl::removeNaNFromPointCloud(*left_lidar, *left_lidar, indices);
+        pcl::removeNaNFromPointCloud(*right_lidar, *right_lidar, indices);
+        pcl::removeNaNFromPointCloud(*back_lidar, *back_lidar, indices);
+        pcl::removeNaNFromPointCloud(*front_lidar1, *front_lidar1, indices);
+        pcl::removeNaNFromPointCloud(*left_lidar1, *left_lidar1, indices);
+        pcl::removeNaNFromPointCloud(*right_lidar1, *right_lidar1, indices);
+        pcl::removeNaNFromPointCloud(*back_lidar1, *back_lidar1, indices);
 
 
-        gtsam::SharedNoiseModel noise_model;
-        noise_model = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Huber::Create(1.345),
-            gtsam::noiseModel::Isotropic::Sigma(1, 0.1));
+        CloudPtr src_front_lidar = pcl::make_shared<PointCloud>();
+        CloudPtr src_front_lidar1 = pcl::make_shared<PointCloud>();
+        CloudPtr src_left_lidar = pcl::make_shared<PointCloud>();
+        CloudPtr src_left_lidar1 = pcl::make_shared<PointCloud>();
+        CloudPtr src_right_lidar = pcl::make_shared<PointCloud>();
+        CloudPtr src_right_lidar1 = pcl::make_shared<PointCloud>();
+        CloudPtr src_back_lidar = pcl::make_shared<PointCloud>();
+        CloudPtr src_back_lidar1 = pcl::make_shared<PointCloud>();
 
-        float voxel_size = 1;
-        OctreeT back_octree(voxel_size);
-        back_octree.setInputCloud(back_lidar1);
-        back_octree.addPointsFromInputCloud();
-        std::vector<std::pair<int, int>> idx_pairs;
+        pcl::copyPointCloud(*front_lidar, *src_front_lidar);
+        pcl::copyPointCloud(*left_lidar, *src_left_lidar);
+        pcl::copyPointCloud(*right_lidar, *src_right_lidar);
+        pcl::copyPointCloud(*back_lidar, *src_back_lidar);
 
-        pcl::KdTreeFLANN<PointT> kd_left1;
-        kd_left1.setInputCloud(left_lidar1);
-        searchInterSection(back_lidar1, back_octree, left_lidar1, kd_left1, voxel_size, idx_pairs);
-        // std::cout << "Intersection: " << idx_pairs.size() << std::endl;
-        for (const auto& [idx0, idx1] : idx_pairs)
-        {
-            graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_back, key_pose_left, noise_model,
-                                                                back_lidar1->at(idx0).getVector3fMap().cast<double>(),
-                                                                left_lidar1->at(idx1).getVector3fMap().cast<double>(),
-                                                                Eigen::Vector3d::Zero(),
-                                                                false);
-            
-        }
+        pcl::copyPointCloud(*front_lidar1, *src_front_lidar1);
+        pcl::copyPointCloud(*left_lidar1, *src_left_lidar1);
+        pcl::copyPointCloud(*right_lidar1, *src_right_lidar1);
+        pcl::copyPointCloud(*back_lidar1, *src_back_lidar1);
 
-        idx_pairs.clear();
-        pcl::KdTreeFLANN<PointT> kd_right1;
-        kd_right1.setInputCloud(right_lidar1);
-        searchInterSection(back_lidar1, back_octree, right_lidar1, kd_right1, voxel_size, idx_pairs);
-        for (const auto& [idx0, idx1] : idx_pairs)
-        {
-            graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_back, key_pose_right, noise_model,
-                                                                back_lidar1->at(idx0).getVector3fMap().cast<double>(),
-                                                                right_lidar1->at(idx1).getVector3fMap().cast<double>(),
-                                                                Eigen::Vector3d::Zero(),
-                                                                false);
-            
-        }
+        indices.clear();
+        CloudPtr sectored_left_pcd = pcdSector<PointT>(left_lidar, -180, 0, indices);
+        indices.clear();
+        CloudPtr sectored_right_pcd = pcdSector<PointT>(right_lidar, 0, 180, indices);
 
-        OctreeT front_octree(voxel_size);
-        front_octree.setInputCloud(front_lidar);
-        front_octree.addPointsFromInputCloud();
+        reg.setInputCloud(sectored_left_pcd);
+        reg.setInputTarget(front_lidar);
+        reg.align(*sectored_left_pcd);
+        Eigen::Matrix4f trans_mat_left = reg.getFinalTransformation();
 
-        idx_pairs.clear();
-        pcl::KdTreeFLANN<PointT>  kd_left0;
-        kd_left0.setInputCloud(left_lidar);
-        searchInterSection(front_lidar, front_octree, left_lidar, kd_left0, voxel_size, idx_pairs);
-        for (const auto& [idx0, idx1] : idx_pairs)
-        {
-            graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_front, key_pose_left, noise_model,
-                                                                front_lidar->at(idx0).getVector3fMap().cast<double>(),
-                                                                left_lidar->at(idx1).getVector3fMap().cast<double>(),
-                                                                Eigen::Vector3d::Zero(),
-                                                                false);
-            
-        }
+        reg.setInputCloud(sectored_right_pcd);
+        reg.setInputTarget(front_lidar);
+        reg.align(*sectored_right_pcd);
+        Eigen::Matrix4f trans_mat_right = reg.getFinalTransformation();
 
-        idx_pairs.clear();
-        pcl::KdTreeFLANN<PointT> kd_right0;
-        kd_right0.setInputCloud(right_lidar);
-        searchInterSection(front_lidar, front_octree, right_lidar, kd_right0, voxel_size, idx_pairs);
-        for (const auto& [idx0, idx1] : idx_pairs)
-        {
-            graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_front, key_pose_right, noise_model,
-                                                                front_lidar->at(idx0).getVector3fMap().cast<double>(),
-                                                                right_lidar->at(idx1).getVector3fMap().cast<double>(),
-                                                                Eigen::Vector3d::Zero(),
-                                                                false);
-            
-        }
+        pcl::transformPointCloud(*left_lidar, *left_lidar, trans_mat_left);
+        pcl::transformPointCloud(*right_lidar, *right_lidar, trans_mat_right);
 
-        OctreeT left_octree(voxel_size);
-        left_octree.setInputCloud(left_lidar);
-        left_octree.addPointsFromInputCloud();
+        CloudPtr front_merge = pcl::make_shared<PointCloud>();
+        CloudPtr back_merge = pcl::make_shared<PointCloud>();
 
-        idx_pairs.clear();
-        searchInterSection(left_lidar, left_octree, right_lidar, kd_right0, voxel_size, idx_pairs);
-        for (const auto& [idx0, idx1] : idx_pairs)
-        {
-            graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_left, key_pose_right, noise_model,
-                                                                left_lidar->at(idx0).getVector3fMap().cast<double>(),
-                                                                right_lidar->at(idx1).getVector3fMap().cast<double>(),
-                                                                Eigen::Vector3d::Zero(),
-                                                                false);
-            
-        }   
-        graph.add(gtsam::PriorFactor<gtsam::Pose3>(key_pose_front, gtsam::Pose3::Identity(), gtsam::noiseModel::Constrained::All(6)));
+        Eigen::Affine3d tans_front = groundOptimization(front_lidar);
+        Eigen::Affine3d tans_left = groundOptimization(left_lidar);
+        Eigen::Affine3d tans_right = groundOptimization(right_lidar);
 
-        gtsam::Values initial;
-        initial.insert(key_pose_front, gtsam::Pose3::Identity());
-        initial.insert(key_pose_left, gtsam::Pose3::Identity());
-        initial.insert(key_pose_right, gtsam::Pose3::Identity());
-        initial.insert(key_pose_back, gtsam::Pose3::Identity());
+        pcl::transformPointCloud(*right_lidar, *right_lidar, tans_right);
+        pcl::transformPointCloud(*front_lidar, *front_lidar, tans_front);
+        pcl::transformPointCloud(*left_lidar, *left_lidar, tans_left);
 
-        gtsam::LevenbergMarquardtParams params;
-        // params.setVerbosity("ERROR");  // 输出优化信息
-        params.verbosityLM = gtsam::LevenbergMarquardtParams::VerbosityLM::SUMMARY;
-        gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial, params);
-        gtsam::Values result_ = optimizer.optimize();
+
+
+
+        pcl::transformPointCloud(*front_lidar1, *front_lidar1, tans_front);
+        pcl::transformPointCloud(*left_lidar1, *left_lidar1, tans_left * Eigen::Affine3d(trans_mat_left.cast<double>()));
+        pcl::transformPointCloud(*right_lidar1, *right_lidar1, tans_right * Eigen::Affine3d(trans_mat_right.cast<double>()));
+
+        mat_front = tans_front * mat_front;
+        mat_left =  tans_left * Eigen::Affine3d(trans_mat_left.cast<double>()) * mat_left;
+        mat_right = tans_right * Eigen::Affine3d(trans_mat_right.cast<double>()) * mat_right;
+
+
+        pcl::IndicedMerge<PointT> merged_back;
+        merged_back.push_back("front", front_lidar1);
+        merged_back.push_back("left", left_lidar1);
+        merged_back.push_back("right", right_lidar1);
         
-        gtsam::Pose3 tr_f = result_.at<gtsam::Pose3>(key_pose_front);
-        gtsam::Pose3 tr_l = result_.at<gtsam::Pose3>(key_pose_left);
-        gtsam::Pose3 tr_r = result_.at<gtsam::Pose3>(key_pose_right);
-        gtsam::Pose3 tr_b = result_.at<gtsam::Pose3>(key_pose_back);
 
-        pcl::transformPointCloud(*front_lidar, *front_lidar, tr_f.matrix());
-        pcl::transformPointCloud(*front_lidar1, *front_lidar1, tr_f.matrix());
+        CloudPtr result_pcd = pcl::make_shared<PointCloud>();
+        reg.setInputCloud(back_lidar1);
+        reg.setInputTarget(merged_back.merged_cloud);
+        reg.align(*result_pcd);
+        Eigen::Matrix4f trans_back = reg.getFinalTransformation();
+        pcl::transformPointCloud(*back_lidar1, *back_lidar1, trans_back);
 
-        pcl::transformPointCloud(*left_lidar, *left_lidar, tr_l.matrix());
-        pcl::transformPointCloud(*left_lidar1, *left_lidar1, tr_l.matrix());
+        mat_back = Eigen::Affine3d(trans_back.cast<double>()) * mat_back;
 
-        pcl::transformPointCloud(*right_lidar, *right_lidar, tr_r.matrix());
-        pcl::transformPointCloud(*right_lidar1, *right_lidar1, tr_r.matrix());
+        Eigen::Affine3d trans_back_ground = groundOptimization(back_lidar1);
 
-        pcl::transformPointCloud(*back_lidar1, *back_lidar1, tr_b.matrix());
-    };
+        pcl::transformPointCloud(*back_lidar1, *back_lidar1, trans_back_ground);
 
-    ros::Rate rate(10); // 发布频率 10Hz
-    while(ros::ok())
-    {
-        opt_intersection();
-        sensor_msgs::PointCloud2 output_f;
-        pcl::toROSMsg(colorPointCloud(*front_lidar1, Eigen::Vector3i(200,200,200)), output_f);
-        output_f.header.stamp = ros::Time::now();
-        output_f.header.frame_id = "lidar";
-        pub_front.publish(output_f);
+        mat_back =  trans_back_ground * mat_back;
 
-        sensor_msgs::PointCloud2 output_l;
-        pcl::toROSMsg(colorPointCloud(*left_lidar1, Eigen::Vector3i(0,255,0)), output_l);
-        output_l.header.stamp = ros::Time::now();
-        output_l.header.frame_id = "lidar";
-        pub_left.publish(output_l);
+        merged_back.push_back("back", back_lidar1);
 
-        sensor_msgs::PointCloud2 output_r;
-        pcl::toROSMsg(colorPointCloud(*right_lidar1, Eigen::Vector3i(255,0,255)), output_r);
-        output_r.header.stamp = ros::Time::now();
-        output_r.header.frame_id = "lidar";
-        pub_right.publish(output_r);
 
-        sensor_msgs::PointCloud2 output_b;
-        pcl::toROSMsg(colorPointCloud(*back_lidar1, Eigen::Vector3i(255,255,0)), output_b);
-        output_b.header.stamp = ros::Time::now();
-        output_b.header.frame_id = "lidar";
-        pub_back.publish(output_b);
+        auto opt_intersection = [&](){
 
-        rate.sleep();
+            gtsam::NonlinearFactorGraph graph;
+            gtsam::Symbol key_pose_front('p', 0);
+            gtsam::Symbol key_pose_left('p', 1);
+            gtsam::Symbol key_pose_right('p', 2);
+            gtsam::Symbol key_pose_back('p', 3);
+
+
+            gtsam::SharedNoiseModel noise_model;
+            noise_model = gtsam::noiseModel::Robust::Create(
+                gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                gtsam::noiseModel::Isotropic::Sigma(1, 0.1));
+
+            float voxel_size = 1;
+            OctreeT back_octree(voxel_size);
+            back_octree.setInputCloud(back_lidar1);
+            back_octree.addPointsFromInputCloud();
+            std::vector<std::pair<int, int>> idx_pairs;
+
+            pcl::KdTreeFLANN<PointT> kd_left1;
+            kd_left1.setInputCloud(left_lidar1);
+            searchInterSection(back_lidar1, back_octree, left_lidar1, kd_left1, voxel_size, idx_pairs);
+            // std::cout << "Intersection: " << idx_pairs.size() << std::endl;
+            for (const auto& [idx0, idx1] : idx_pairs)
+            {
+                graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_back, key_pose_left, noise_model,
+                                                                    back_lidar1->at(idx0).getVector3fMap().cast<double>(),
+                                                                    left_lidar1->at(idx1).getVector3fMap().cast<double>(),
+                                                                    Eigen::Vector3d::Zero(),
+                                                                    false);
+                
+            }
+
+            idx_pairs.clear();
+            pcl::KdTreeFLANN<PointT> kd_right1;
+            kd_right1.setInputCloud(right_lidar1);
+            searchInterSection(back_lidar1, back_octree, right_lidar1, kd_right1, voxel_size, idx_pairs);
+            for (const auto& [idx0, idx1] : idx_pairs)
+            {
+                graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_back, key_pose_right, noise_model,
+                                                                    back_lidar1->at(idx0).getVector3fMap().cast<double>(),
+                                                                    right_lidar1->at(idx1).getVector3fMap().cast<double>(),
+                                                                    Eigen::Vector3d::Zero(),
+                                                                    false);
+                
+            }
+
+            OctreeT front_octree(voxel_size);
+            front_octree.setInputCloud(front_lidar);
+            front_octree.addPointsFromInputCloud();
+
+            idx_pairs.clear();
+            pcl::KdTreeFLANN<PointT>  kd_left0;
+            kd_left0.setInputCloud(left_lidar);
+            searchInterSection(front_lidar, front_octree, left_lidar, kd_left0, voxel_size, idx_pairs);
+            for (const auto& [idx0, idx1] : idx_pairs)
+            {
+                graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_front, key_pose_left, noise_model,
+                                                                    front_lidar->at(idx0).getVector3fMap().cast<double>(),
+                                                                    left_lidar->at(idx1).getVector3fMap().cast<double>(),
+                                                                    Eigen::Vector3d::Zero(),
+                                                                    false);
+                
+            }
+
+            idx_pairs.clear();
+            pcl::KdTreeFLANN<PointT> kd_right0;
+            kd_right0.setInputCloud(right_lidar);
+            searchInterSection(front_lidar, front_octree, right_lidar, kd_right0, voxel_size, idx_pairs);
+            for (const auto& [idx0, idx1] : idx_pairs)
+            {
+                graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_front, key_pose_right, noise_model,
+                                                                    front_lidar->at(idx0).getVector3fMap().cast<double>(),
+                                                                    right_lidar->at(idx1).getVector3fMap().cast<double>(),
+                                                                    Eigen::Vector3d::Zero(),
+                                                                    false);
+                
+            }
+
+            OctreeT left_octree(voxel_size);
+            left_octree.setInputCloud(left_lidar);
+            left_octree.addPointsFromInputCloud();
+
+            idx_pairs.clear();
+            searchInterSection(left_lidar, left_octree, right_lidar, kd_right0, voxel_size, idx_pairs);
+            for (const auto& [idx0, idx1] : idx_pairs)
+            {
+                graph.emplace_shared<ml_calib::LidarJointOptFactor>(key_pose_left, key_pose_right, noise_model,
+                                                                    left_lidar->at(idx0).getVector3fMap().cast<double>(),
+                                                                    right_lidar->at(idx1).getVector3fMap().cast<double>(),
+                                                                    Eigen::Vector3d::Zero(),
+                                                                    false);
+                
+            }   
+            // graph.add(gtsam::PriorFactor<gtsam::Pose3>(key_pose_front, gtsam::Pose3::Identity(), gtsam::noiseModel::Constrained::All(6)));
+
+            gtsam::Values initial;
+            initial.insert(key_pose_front, gtsam::Pose3::Identity());
+            initial.insert(key_pose_left, gtsam::Pose3::Identity());
+            initial.insert(key_pose_right, gtsam::Pose3::Identity());
+            initial.insert(key_pose_back, gtsam::Pose3::Identity());
+
+            gtsam::LevenbergMarquardtParams params;
+            // params.setVerbosity("ERROR");  // 输出优化信息
+            params.verbosityLM = gtsam::LevenbergMarquardtParams::VerbosityLM::SUMMARY;
+            gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial, params);
+            gtsam::Values result_ = optimizer.optimize();
+            
+            gtsam::Pose3 tr_f = result_.at<gtsam::Pose3>(key_pose_front);
+            gtsam::Pose3 tr_l = result_.at<gtsam::Pose3>(key_pose_left);
+            gtsam::Pose3 tr_r = result_.at<gtsam::Pose3>(key_pose_right);
+            gtsam::Pose3 tr_b = result_.at<gtsam::Pose3>(key_pose_back);
+
+            pcl::transformPointCloud(*front_lidar, *front_lidar, tr_f.matrix());
+            pcl::transformPointCloud(*front_lidar1, *front_lidar1, tr_f.matrix());
+
+            pcl::transformPointCloud(*left_lidar, *left_lidar, tr_l.matrix());
+            pcl::transformPointCloud(*left_lidar1, *left_lidar1, tr_l.matrix());
+
+            pcl::transformPointCloud(*right_lidar, *right_lidar, tr_r.matrix());
+            pcl::transformPointCloud(*right_lidar1, *right_lidar1, tr_r.matrix());
+
+            pcl::transformPointCloud(*back_lidar1, *back_lidar1, tr_b.matrix());
+
+            mat_front = Eigen::Affine3d(tr_f.matrix()) * mat_front;
+            mat_left = Eigen::Affine3d(tr_l.matrix()) * mat_left;
+            mat_right = Eigen::Affine3d(tr_r.matrix()) * mat_right;
+            mat_back = Eigen::Affine3d(tr_b.matrix()) * mat_back;
+        };
+
+
+        auto funPlaneOpt = [&]() -> double{
+
+            pcl::IndicedMerge<PointT> merged0, merged1;
+            pcl::KdTreeFLANN<PointT> kd_merged0, kd_merged1;
+            merged0.push_back("f", front_lidar);
+            merged0.push_back("l", left_lidar);
+            merged0.push_back("r", right_lidar);
+
+            merged1.push_back("l", left_lidar1);
+            merged1.push_back("r", right_lidar1);
+            merged1.push_back("b", back_lidar1);
+
+            std::unordered_set<int> indices_ground_merged0, indices_ground_merged1;
+            segGround(merged0.merged_cloud, indices_ground_merged0, root["ground_z_threshold"].as<float>());
+            segGround(merged1.merged_cloud, indices_ground_merged1, root["ground_z_threshold"].as<float>());
+
+            kd_merged0.setInputCloud(merged0.merged_cloud);
+            kd_merged1.setInputCloud(merged1.merged_cloud);
+
+            gtsam::NonlinearFactorGraph graph;
+            gtsam::Symbol key_pose_front('p', 0);
+            gtsam::Symbol key_pose_left('p', 1);
+            gtsam::Symbol key_pose_right('p', 2);
+            gtsam::Symbol key_pose_back('p', 3);
+
+            gtsam::SharedNoiseModel plane_noise_model = gtsam::noiseModel::Robust::Create(
+                                    gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                                    gtsam::noiseModel::Isotropic::Sigma(1, 0.5));
+            
+            gtsam::SharedNoiseModel ground_noise_model = gtsam::noiseModel::Robust::Create(
+                                    gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                                    gtsam::noiseModel::Isotropic::Sigma(1, 1.0));
+
+            gtsam::SharedNoiseModel ground_back_noise_model = gtsam::noiseModel::Robust::Create(
+                                    gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                                    gtsam::noiseModel::Isotropic::Sigma(1, 0.1));
+
+
+            std::vector<std::pair<int, int>> indices_paires;
+            auto func_plane_facror_build = 
+                [&](pcl::IndicedMerge<PointT>& merged,
+                    pcl::KdTreeFLANN<PointT>& kd_merged,
+                    const std::string str0, 
+                    const std::string str1, 
+                    gtsam::Symbol& k0, 
+                    gtsam::Symbol& k1,
+                    std::unordered_set<int>& indices_ground,
+                    const gtsam::SharedNoiseModel& g_noise_model,
+                    double factor_weight = 1) -> int{
+                float threashould = root["threshold_plane"].as<float>();
+                // visualizeIntersection(merged, kd_merged, indices_paires, str0, str1, threashould);
+                int plane_count = 0;
+                for (const auto [id0_, id1_] : indices_paires)
+                {
+                    int id0 = merged.idxLocal2Global(str0, id0_);
+                    int id1 = merged.idxLocal2Global(str1, id1_);
+
+                    ConstCloudPtr merged_cloud = merged.merged_cloud;
+                    pcl::Indices indices;
+                    std::vector<float> dists;
+                    kd_merged.radiusSearch(merged_cloud->at(id0), 0.8, indices, dists);
+                    Eigen::Vector3f normal;
+                    if (threashould < checkPlane<PointT>(merged_cloud, indices, normal)){
+                        if (indices_ground.find(id0) != indices_ground.end() ||
+                            indices_ground.find(id1) != indices_ground.end()){
+                            graph.emplace_shared<ml_calib::LidarJointOptFactor>(k0, k1, g_noise_model, 
+                                                                                merged_cloud->at(id0).getVector3fMap().cast<double>(),
+                                                                                merged_cloud->at(id1).getVector3fMap().cast<double>(),
+                                                                                normal.cast<double>(), true, factor_weight);
+                            plane_count++;
+                        }else{
+                            graph.emplace_shared<ml_calib::LidarJointOptFactor>(k0, k1, plane_noise_model, 
+                                                                                merged_cloud->at(id0).getVector3fMap().cast<double>(),
+                                                                                merged_cloud->at(id1).getVector3fMap().cast<double>(),
+                                                                                normal.cast<double>(), true);
+                        }
+                    }
+                }
+                return plane_count;
+            };
+
+
+
+
+            float pp_voxel_size = 1;
+            OctreeT octree_front0(pp_voxel_size);
+            octree_front0.setInputCloud(front_lidar);
+            octree_front0.addPointsFromInputCloud();
+            pcl::KdTreeFLANN<PointT> kd_left0, kd_right0;
+            kd_left0.setInputCloud(left_lidar);
+            kd_right0.setInputCloud(right_lidar);
+
+
+            indices_paires.clear();
+            searchInterSection(front_lidar, octree_front0, left_lidar, kd_left0, pp_voxel_size, indices_paires);
+            int fl_count = func_plane_facror_build(merged0, kd_merged0, "f", "l", key_pose_front, key_pose_left, indices_ground_merged0, ground_noise_model, root["ground_weight_f_l"].as<double>());
+
+            indices_paires.clear();
+            searchInterSection(front_lidar, octree_front0, right_lidar, kd_right0, pp_voxel_size, indices_paires);
+            int fr_count = func_plane_facror_build(merged0, kd_merged0, "f", "r", key_pose_front, key_pose_right, indices_ground_merged0, ground_noise_model, root["ground_weight_f_r"].as<double>());
+
+            OctreeT octree_left0(pp_voxel_size);
+            octree_left0.setInputCloud(left_lidar);
+            octree_left0.addPointsFromInputCloud();
+            indices_paires.clear();
+            searchInterSection(left_lidar, octree_left0, right_lidar, kd_right0, pp_voxel_size, indices_paires);
+            int lr_count = func_plane_facror_build(merged0, kd_merged0, "l", "r", key_pose_left, key_pose_right, indices_ground_merged0, ground_noise_model, root["ground_weight_l_r"].as<double>());
+
+
+            OctreeT octree_back1(pp_voxel_size);
+            octree_back1.setInputCloud(back_lidar1);
+            octree_back1.addPointsFromInputCloud();
+            pcl::KdTreeFLANN<PointT> kd_left1, kd_right1;
+            kd_left1.setInputCloud(left_lidar1);
+            kd_right1.setInputCloud(right_lidar1);
+
+            indices_paires.clear();
+            searchInterSection(back_lidar1, octree_back1, left_lidar1, kd_left1, pp_voxel_size, indices_paires);
+            int bl_count = func_plane_facror_build(merged1, kd_merged1, "b", "l", key_pose_back, key_pose_left, indices_ground_merged1, ground_back_noise_model, root["ground_weight_b_l"].as<double>());
+
+            indices_paires.clear();
+            searchInterSection(back_lidar1, octree_back1, right_lidar1, kd_right1, pp_voxel_size, indices_paires);
+            int br_count = func_plane_facror_build(merged1, kd_merged1, "b", "r", key_pose_back, key_pose_right, indices_ground_merged1, ground_back_noise_model, root["ground_weight_b_r"].as<double>());
+
+            std::cout << "count of plane: " << fl_count << " " << fr_count << " " << lr_count << " " << bl_count << " " << br_count << std::endl;
+
+            graph.add(gtsam::PriorFactor<gtsam::Pose3>(key_pose_back, gtsam::Pose3::Identity(), gtsam::noiseModel::Constrained::All(6)));
+
+            gtsam::Values initial;
+            initial.insert(key_pose_front, gtsam::Pose3::Identity());
+            initial.insert(key_pose_left, gtsam::Pose3::Identity());
+            initial.insert(key_pose_right, gtsam::Pose3::Identity());
+            initial.insert(key_pose_back, gtsam::Pose3::Identity());
+
+            gtsam::LevenbergMarquardtParams params;
+            // params.setVerbosity("ERROR");  // 输出优化信息
+            params.verbosityLM = gtsam::LevenbergMarquardtParams::VerbosityLM::SUMMARY;
+            gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial, params);
+            double init_error = optimizer.error();
+            std::cout << "Initilization cost: " << init_error << std::endl;
+            gtsam::Values result_ = optimizer.optimize();
+            double opted_error = optimizer.error();
+            std::cout << "Optimized cost: " << opted_error << std::endl;
+            std::cout << "Cost Change: " << init_error - opted_error << std::endl;
+
+            gtsam::Pose3 tr_f = result_.at<gtsam::Pose3>(key_pose_front);
+            gtsam::Pose3 tr_l = result_.at<gtsam::Pose3>(key_pose_left);
+            gtsam::Pose3 tr_r = result_.at<gtsam::Pose3>(key_pose_right);
+            gtsam::Pose3 tr_b = result_.at<gtsam::Pose3>(key_pose_back);
+
+            mat_front = Eigen::Affine3d(tr_f.matrix()) * mat_front;
+            mat_left = Eigen::Affine3d(tr_l.matrix()) * mat_left;
+            mat_right = Eigen::Affine3d(tr_r.matrix()) * mat_right;
+            mat_back = Eigen::Affine3d(tr_b.matrix()) * mat_back;
+
+
+            front_lidar->clear();
+            front_lidar1->clear();
+            left_lidar->clear();
+            left_lidar1->clear();
+            right_lidar->clear();
+            right_lidar1->clear();
+            back_lidar1->clear();
+
+            pcl::transformPointCloud(*src_front_lidar, *front_lidar, mat_front);
+            pcl::transformPointCloud(*src_front_lidar1, *front_lidar1, mat_front);
+
+            pcl::transformPointCloud(*src_left_lidar, *left_lidar, mat_left);
+            pcl::transformPointCloud(*src_left_lidar1, *left_lidar1, mat_left);
+
+            pcl::transformPointCloud(*src_right_lidar, *right_lidar, mat_right);
+            pcl::transformPointCloud(*src_right_lidar1, *right_lidar1, mat_right);
+
+            pcl::transformPointCloud(*src_back_lidar1, *back_lidar1, mat_back);
+
+
+            return init_error - opted_error;
+        };
+
+        auto funcGroundOpt = [&]() {
+            pcl::IndicedMerge<PointT> merged0, merged1;
+            pcl::KdTreeFLANN<PointT> kd_merged0, kd_merged1;
+            merged0.push_back("f", front_lidar);
+            merged0.push_back("l", left_lidar);
+            merged0.push_back("r", right_lidar);
+
+            merged1.push_back("l", left_lidar1);
+            merged1.push_back("r", right_lidar1);
+            merged1.push_back("b", back_lidar1);
+
+            std::unordered_set<int> indices_ground_merged0, indices_ground_merged1;
+            segGround(merged0.merged_cloud, indices_ground_merged0, root["ground_z_threshold"].as<float>());
+            segGround(merged1.merged_cloud, indices_ground_merged1, root["ground_z_threshold"].as<float>());
+
+            CloudPtr ground_pub_pcd_f = pcl::make_shared<PointCloud>();
+            CloudPtr ground_pub_pcd_b = pcl::make_shared<PointCloud>();
+            pcl::Indices indices_vector_ground_merged0, indices_vector_ground_merged1;
+            for (auto idx : indices_ground_merged0){
+                indices_vector_ground_merged0.push_back(idx);
+                ground_pub_pcd_f->push_back(merged0.merged_cloud->at(idx));
+            }
+            for (auto idx : indices_ground_merged1){
+                indices_vector_ground_merged1.push_back(idx);
+                ground_pub_pcd_b->push_back(merged1.merged_cloud->at(idx));
+            }
+
+            pcl::copyPointCloud(*merged0.merged_cloud, indices_vector_ground_merged0, *ground_pub_pcd_f);
+            pcl::copyPointCloud(*merged1.merged_cloud, indices_vector_ground_merged1, *ground_pub_pcd_b);
+            sensor_msgs::PointCloud2 output_f;
+            pcl::toROSMsg(colorPointCloud(*ground_pub_pcd_f, Eigen::Vector3i(200,200,200)), output_f);
+            output_f.header.stamp = ros::Time::now();
+            output_f.header.frame_id = "lidar";
+            pub_groud_front.publish(output_f);
+
+
+            sensor_msgs::PointCloud2 output_b;
+            pcl::toROSMsg(colorPointCloud(*ground_pub_pcd_b, Eigen::Vector3i(200,200,200)), output_b);
+            output_b.header.stamp = ros::Time::now();
+            output_b.header.frame_id = "lidar";
+            pub_groud_back.publish(output_b);
+            
+            pcl::Indices in_merged0, inmerged1;
+            for(auto idx : indices_ground_merged0){
+                in_merged0.push_back(idx);  
+            }
+            for (auto idx : indices_ground_merged1){
+                inmerged1.push_back(idx);  
+            }
+            pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/front_ground.pcd", *merged0.merged_cloud, in_merged0);
+            pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/back_ground.pcd", *merged1.merged_cloud, inmerged1);
+
+            kd_merged0.setInputCloud(merged0.merged_cloud);
+            kd_merged1.setInputCloud(merged1.merged_cloud);
+
+            gtsam::NonlinearFactorGraph graph_ground;
+            gtsam::Symbol key_pose_front_ground('p', 0);
+            gtsam::Symbol key_pose_left_ground('p', 1);
+            gtsam::Symbol key_pose_right_ground('p', 2);
+            gtsam::Symbol key_pose_back_ground('p', 3);
+            gtsam::Symbol key_front_z_ground('z', 0);
+            gtsam::Symbol key_left_z_ground('z', 1);
+            gtsam::Symbol key_right_z_ground('z', 2);
+            gtsam::Symbol key_back_z_ground('z', 3);
+
+            std::vector<std::pair<int, int>> indices_paires;
+            auto func_ground_facror_build = 
+                [&](pcl::IndicedMerge<PointT>& merged,
+                    pcl::KdTreeFLANN<PointT>& kd_merged,
+                    const std::string str0, 
+                    const std::string str1, 
+                    gtsam::Symbol& k0, 
+                    gtsam::Symbol& k1,
+                    gtsam::Symbol& k3,
+                    gtsam::Symbol& k4,
+                    std::unordered_set<int>& indices_ground,
+                    const gtsam::SharedNoiseModel& g_noise_model,
+                    double factor_weight = 1) -> int{
+                float threashould = root["threshold_plane"].as<float>();
+                // visualizeIntersection(merged, kd_merged, indices_paires, str0, str1, threashould);
+                int plane_count = 0;
+                for (const auto [id0_, id1_] : indices_paires)
+                {
+                    int id0 = merged.idxLocal2Global(str0, id0_);
+                    int id1 = merged.idxLocal2Global(str1, id1_);
+
+                    ConstCloudPtr merged_cloud = merged.merged_cloud;
+                    std::vector<float> dists;
+                    if (indices_ground.find(id0) != indices_ground.end() ||
+                        indices_ground.find(id1) != indices_ground.end()){
+                        graph_ground.emplace_shared<ml_calib::GroundJointOptFactor>(merged_cloud->at(id0).getVector3fMap().cast<double>(),
+                                                                                merged_cloud->at(id1).getVector3fMap().cast<double>(),
+                                                                                k0, k1, k3, k4,
+                                                                                g_noise_model, factor_weight);
+                        plane_count++;
+                    }
+                }
+                return plane_count;
+            };
+
+            float pp_voxel_size = 1;
+            OctreeT octree_front0(pp_voxel_size);
+            octree_front0.setInputCloud(front_lidar);
+            octree_front0.addPointsFromInputCloud();
+            pcl::KdTreeFLANN<PointT> kd_left0, kd_right0;
+            kd_left0.setInputCloud(left_lidar);
+            kd_right0.setInputCloud(right_lidar);
+
+            gtsam::SharedNoiseModel plane_noise_model = gtsam::noiseModel::Robust::Create(
+                                    gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                                    gtsam::noiseModel::Isotropic::Sigma(1, 0.5));
+            
+            gtsam::SharedNoiseModel ground_noise_model = gtsam::noiseModel::Robust::Create(
+                                    gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                                    gtsam::noiseModel::Isotropic::Sigma(1, 1.0));
+
+            gtsam::SharedNoiseModel ground_back_noise_model = gtsam::noiseModel::Robust::Create(
+                                    gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                                    gtsam::noiseModel::Isotropic::Sigma(1, 0.1));
+
+
+
+            indices_paires.clear();
+            searchInterSection(front_lidar, octree_front0, left_lidar, kd_left0, pp_voxel_size, indices_paires);
+            int fl_count = func_ground_facror_build(merged0, kd_merged0, 
+                                                    "f", "l", 
+                                                    key_pose_front_ground, key_pose_left_ground, 
+                                                    key_front_z_ground, key_left_z_ground,
+                                                    indices_ground_merged0, 
+                                                    ground_noise_model,
+                                                    root["ground_weight_f_l"].as<double>());
+
+            indices_paires.clear();
+            searchInterSection(front_lidar, octree_front0, right_lidar, kd_right0, pp_voxel_size, indices_paires);
+            int fr_count = func_ground_facror_build(merged0, kd_merged0, 
+                                                    "f", "r", 
+                                                    key_pose_front_ground, key_pose_right_ground, 
+                                                    key_front_z_ground, key_right_z_ground,
+                                                    indices_ground_merged0, 
+                                                    ground_noise_model, 
+                                                    root["ground_weight_f_r"].as<double>());
+
+            OctreeT octree_left0(pp_voxel_size);
+            octree_left0.setInputCloud(left_lidar);
+            octree_left0.addPointsFromInputCloud();
+            indices_paires.clear();
+            searchInterSection(left_lidar, octree_left0, right_lidar, kd_right0, pp_voxel_size, indices_paires);
+            int lr_count = func_ground_facror_build(merged0, kd_merged0, 
+                                                    "l", "r", 
+                                                    key_pose_left_ground, key_pose_right_ground, 
+                                                    key_left_z_ground, key_right_z_ground,
+                                                    indices_ground_merged0, 
+                                                    ground_noise_model, 
+                                                    root["ground_weight_l_r"].as<double>());
+
+
+            OctreeT octree_back1(pp_voxel_size);
+            octree_back1.setInputCloud(back_lidar1);
+            octree_back1.addPointsFromInputCloud();
+            pcl::KdTreeFLANN<PointT> kd_left1, kd_right1;
+            kd_left1.setInputCloud(left_lidar1);
+            kd_right1.setInputCloud(right_lidar1);
+
+            indices_paires.clear();
+            searchInterSection(back_lidar1, octree_back1, left_lidar1, kd_left1, pp_voxel_size, indices_paires);
+            int bl_count = func_ground_facror_build(merged1, kd_merged1,
+                                                     "b", "l", 
+                                                     key_pose_back_ground, key_pose_left_ground, 
+                                                     key_back_z_ground, key_left_z_ground,
+                                                     indices_ground_merged1, 
+                                                     ground_back_noise_model, 
+                                                     root["ground_weight_b_l"].as<double>());
+
+            indices_paires.clear();
+            searchInterSection(back_lidar1, octree_back1, right_lidar1, kd_right1, pp_voxel_size, indices_paires);
+            int br_count = func_ground_facror_build(merged1, kd_merged1, 
+                                                "b", "r", 
+                                                key_pose_back_ground, key_pose_right_ground, 
+                                                key_back_z_ground, key_right_z_ground,
+                                                indices_ground_merged1, 
+                                                ground_back_noise_model, 
+                                                root["ground_weight_b_r"].as<double>());
+
+            gtsam::Values initial;
+            initial.insert(key_pose_front_ground, gtsam::Vector2(0,0));
+            initial.insert(key_pose_left_ground, gtsam::Vector2(0,0));
+            initial.insert(key_pose_right_ground, gtsam::Vector2(0,0));
+            initial.insert(key_pose_back_ground, gtsam::Vector2(0,0));
+            initial.insert(key_front_z_ground, gtsam::Vector1(0));
+            initial.insert(key_left_z_ground, gtsam::Vector1(0));
+            initial.insert(key_right_z_ground, gtsam::Vector1(0));
+            initial.insert(key_back_z_ground, gtsam::Vector1(0));
+
+            auto priorNoise = gtsam::noiseModel::Diagonal::Sigmas(
+                (gtsam::Vector(2) << 1e-6, 1e-6).finished()
+            );
+
+            auto bigpriorNoise = gtsam::noiseModel::Diagonal::Sigmas(
+                (gtsam::Vector(2) << 1e6, 1e6).finished()
+            );
+
+            auto priorNoise_z = gtsam::noiseModel::Diagonal::Sigmas(
+                (gtsam::Vector(1) << 1e-6).finished()
+            );
+            graph_ground.add(gtsam::PriorFactor<gtsam::Vector2>(key_pose_front_ground, gtsam::Vector2::Zero(), priorNoise));
+            graph_ground.add(gtsam::PriorFactor<gtsam::Vector1>(key_front_z_ground, gtsam::Vector1::Zero(), priorNoise_z));
+
+            // graph_ground.add(gtsam::PriorFactor<gtsam::Vector2>(key_pose_left_ground, gtsam::Vector2::Zero(), priorNoise));
+            // graph_ground.add(gtsam::PriorFactor<gtsam::Vector2>(key_pose_right_ground, gtsam::Vector2::Zero(), priorNoise));
+            // graph_ground.add(gtsam::PriorFactor<gtsam::Vector2>(key_pose_back_ground, gtsam::Vector2::Zero(), priorNoise));
+
+
+            gtsam::LevenbergMarquardtParams params;
+            // params.setVerbosity("ERROR");  // 输出优化信息
+            params.verbosityLM = gtsam::LevenbergMarquardtParams::VerbosityLM::SUMMARY;
+            gtsam::LevenbergMarquardtOptimizer optimizer(graph_ground, initial, params);
+            double init_error = optimizer.error();
+            std::cout << "Ground Initilization cost: " << init_error << std::endl;
+            gtsam::Values result_ = optimizer.optimize();
+            double opted_error = optimizer.error();
+            std::cout << "Ground Optimized cost: " << opted_error << std::endl;
+            std::cout << "Ground Cost Change: " << init_error - opted_error << std::endl;
+
+            gtsam::Vector2 tr_f = result_.at<gtsam::Vector2>(key_pose_front_ground);
+            gtsam::Vector2 tr_l = result_.at<gtsam::Vector2>(key_pose_left_ground);
+            gtsam::Vector2 tr_r = result_.at<gtsam::Vector2>(key_pose_right_ground);
+            gtsam::Vector2 tr_b = result_.at<gtsam::Vector2>(key_pose_back_ground);
+
+            gtsam::Vector1 tr_f_z = result_.at<gtsam::Vector1>(key_front_z_ground);
+            gtsam::Vector1 tr_l_z = result_.at<gtsam::Vector1>(key_left_z_ground);
+            gtsam::Vector1 tr_r_z = result_.at<gtsam::Vector1>(key_right_z_ground);
+            gtsam::Vector1 tr_b_z = result_.at<gtsam::Vector1>(key_back_z_ground);
+           
+            // tr_r.x() = 0.3;
+            // tr_l.y() = 0.3;
+
+            Eigen::Affine3d t_f = Eigen::Affine3d::Identity();
+            t_f.translate(Eigen::Vector3d(0, 0, tr_f_z.x()));
+            t_f.rotate(Eigen::AngleAxisd(tr_f.y(), Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(tr_f.x(), Eigen::Vector3d::UnitX()));
+
+            Eigen::Affine3d t_l = Eigen::Affine3d::Identity();
+            t_l.translate(Eigen::Vector3d(0, 0, tr_l_z.x()));
+            t_l.rotate(Eigen::AngleAxisd(tr_l.y(), Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(tr_l.x(), Eigen::Vector3d::UnitX()));
+
+            Eigen::Affine3d t_r = Eigen::Affine3d::Identity();
+            t_r.translate(Eigen::Vector3d(0, 0, tr_r_z.x()));
+            t_r.rotate(Eigen::AngleAxisd(tr_r.y(), Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(tr_r.x(), Eigen::Vector3d::UnitX()));
+
+            Eigen::Affine3d t_b = Eigen::Affine3d::Identity();
+            t_b.translate(Eigen::Vector3d(0, 0, tr_b_z.x()));
+            t_b.rotate(Eigen::AngleAxisd(tr_b.y(), Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(tr_b.x(), Eigen::Vector3d::UnitX()));
+            
+            mat_front = Eigen::Affine3d(t_f.matrix()) * mat_front;
+            mat_left = Eigen::Affine3d(t_l.matrix()) * mat_left;
+            mat_right = Eigen::Affine3d(t_r.matrix()) * mat_right;
+            mat_back = Eigen::Affine3d(t_b.matrix()) * mat_back;
+
+
+            front_lidar->clear();
+            front_lidar1->clear();
+            left_lidar->clear();
+            left_lidar1->clear();
+            right_lidar->clear();
+            right_lidar1->clear();
+            back_lidar1->clear();
+
+            pcl::transformPointCloud(*src_front_lidar, *front_lidar, mat_front);
+            pcl::transformPointCloud(*src_front_lidar1, *front_lidar1, mat_front);
+
+            pcl::transformPointCloud(*src_left_lidar, *left_lidar, mat_left);
+            pcl::transformPointCloud(*src_left_lidar1, *left_lidar1, mat_left);
+
+            pcl::transformPointCloud(*src_right_lidar, *right_lidar, mat_right);
+            pcl::transformPointCloud(*src_right_lidar1, *right_lidar1, mat_right);
+
+            pcl::transformPointCloud(*src_back_lidar1, *back_lidar1, mat_back);
+
+        };
+
+        // fast_gicp::FastVGICP<PointT, PointT> fast_vgicp;
+        // fast_vgicp.setResolution(1.0);
+        // fast_vgicp.setNumThreads(8);
+        // fast_vgicp.setInputCloud(back_lidar);
+        // fast_vgicp.setInputTarget(left_lidar);
+        // pcl::PointCloud<PointT>::Ptr aaa_test(new pcl::PointCloud<PointT>());
+        // // fast_vgicp.align(*aaa_test);
+        // *aaa_test += *left_lidar;
+        // *aaa_test += *back_lidar;
+        // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test_aaaaa.pcd", *aaa_test);
+
+        ros::Rate rate(10); // 发布频率 10Hz
+        int count = 0;
+        
+        bool opt_finished = false;
+        while(ros::ok())
+        {
+            std::cout << "mark" << std::endl;
+            ros::spinOnce();
+            std::cout << "mark2" << std::endl;
+
+            double cost_change;
+            if (!opt_finished){
+                cost_change = funPlaneOpt();
+            }else{
+                // funcGroundOpt();
+            }
+
+
+            Eigen::Matrix4d fix_f = bound_to_mat(Eigen::Vector3d(ml_calib_config.x, ml_calib_config.y, ml_calib_config.z), 
+                                        Eigen::Vector3d(ml_calib_config.pitch_x, ml_calib_config.roll_y, ml_calib_config.yaw_z)).matrix();
+
+            Eigen::Matrix4d T_front = fix_f * pre_map;
+            Eigen::Matrix4d T_L0toL1 = (mat_front.inverse() * mat_left).matrix();
+            Eigen::Matrix4d T_L0toL2 = (mat_front.inverse() * mat_right).matrix();
+            Eigen::Matrix4d T_L0toL3 = (mat_front.inverse() * mat_back).matrix();
+
+            PointCloud pub_cloud_front, pub_cloud_left, pub_cloud_right, pub_cloud_back;
+            pcl::transformPointCloud(*src_front_lidar, pub_cloud_front, T_front);
+            pcl::transformPointCloud(*src_left_lidar, pub_cloud_left, (T_front * T_L0toL1).cast<float>());
+            pcl::transformPointCloud(*src_right_lidar, pub_cloud_right, (T_front * T_L0toL2).cast<float>());
+            pcl::transformPointCloud(*src_back_lidar, pub_cloud_back, (T_front * T_L0toL3).cast<float>());
+
+
+
+            sensor_msgs::PointCloud2 output_f;
+            pcl::toROSMsg(colorPointCloud(pub_cloud_front, Eigen::Vector3i(200,200,200)), output_f);
+            output_f.header.stamp = ros::Time::now();
+            output_f.header.frame_id = "lidar";
+            pub_front.publish(output_f);
+
+            sensor_msgs::PointCloud2 output_l;
+            pcl::toROSMsg(colorPointCloud(pub_cloud_left, Eigen::Vector3i(0,255,0)), output_l);
+            output_l.header.stamp = ros::Time::now();
+            output_l.header.frame_id = "lidar";
+            pub_left.publish(output_l);
+
+            sensor_msgs::PointCloud2 output_r;
+            pcl::toROSMsg(colorPointCloud(pub_cloud_right, Eigen::Vector3i(255,0,255)), output_r);
+            output_r.header.stamp = ros::Time::now();
+            output_r.header.frame_id = "lidar";
+            pub_right.publish(output_r);
+
+            sensor_msgs::PointCloud2 output_b;
+            pcl::toROSMsg(colorPointCloud(pub_cloud_back, Eigen::Vector3i(255,255,0)), output_b);
+            output_b.header.stamp = ros::Time::now();
+            output_b.header.frame_id = "lidar";
+            pub_back.publish(output_b);
+
+            std::cout << "Num of optimization: " << count << std::endl;
+            std::cout << "The final cost change:" << cost_change << std::endl;
+
+            std::cout << "front: " << std::endl;
+            std::cout << "euler: " <<  T_front.topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)  
+                        << ", " << T_front.topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+            std::cout << T_front.format(eigen_fmt) << std::endl;
+
+            std::cout << "left: " << std::endl;
+            std::cout << "euler: " <<  (T_front * T_L0toL1).topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)  
+                        << ", " << (T_front * T_L0toL1).topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+            std::cout << (T_front * T_L0toL1).format(eigen_fmt) << std::endl;
+
+            std::cout << "right: " << std::endl;
+            std::cout << "euler: " <<  (T_front * T_L0toL2).topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)  
+                        << ", " << (T_front * T_L0toL2).topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+            std::cout << (T_front * T_L0toL2).format(eigen_fmt) << std::endl;
+            std::cout << "back: " << std::endl; 
+
+            std::cout << "euler: " <<  (T_front * T_L0toL3).topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)  
+                        << ", " << (T_front * T_L0toL3).topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+            std::cout << (T_front * T_L0toL3).format(eigen_fmt) << std::endl;
+
+
+            count++;
+            // if (cost_change < 0.1) {
+                if (count > 10){
+                    opt_finished = true;
+                }
+                if (count > 20) {
+                    // exit(0);
+                }
+            // }
+            // rate.sleep();
+        }
+    }else{
+        CloudPtr left_lidar = pcd_lst[0][0];
+        CloudPtr right_lidar = pcd_lst[0][1];
+
+        std::vector<int> indices;
+        pcl::removeNaNFromPointCloud(*left_lidar, *left_lidar, indices);
+        pcl::removeNaNFromPointCloud(*right_lidar, *right_lidar, indices);
+
+        indices.clear();
+        CloudPtr sectored_left_pcd = pcdSector<PointT>(left_lidar, -180, 0, indices);
+        indices.clear();
+        CloudPtr sectored_right_pcd = pcdSector<PointT>(right_lidar, -90, 90, indices);
+        PointCloud tmp_pcd;
+        reg.setInputCloud(sectored_right_pcd);
+        reg.setInputTarget(sectored_left_pcd);
+        reg.align(tmp_pcd);
+        Eigen::Matrix4f trans_mat_right = reg.getFinalTransformation();
+
+        // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/source0.pcd", *left_lidar);
+        // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/source1.pcd", *right_lidar);
+        // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/sectored0.pcd", *sectored_left_pcd);
+        // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/sectored1.pcd", *sectored_right_pcd);
+        pcl::transformPointCloud(*right_lidar, *right_lidar, trans_mat_right);
+
+        PointCloud aa;
+        aa += *left_lidar;
+        aa += *right_lidar;
+        // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/merged_front.pcd", aa);
+
+        CloudPtr front_merge = pcl::make_shared<PointCloud>();
+        CloudPtr back_merge = pcl::make_shared<PointCloud>();
+
+        Eigen::Affine3d tans_left = groundOptimization(left_lidar);
+        Eigen::Affine3d tans_right = groundOptimization(right_lidar);
+
+        pcl::transformPointCloud(*left_lidar, *left_lidar, tans_left);
+        pcl::transformPointCloud(*right_lidar, *right_lidar, tans_right);
+
+        CloudPtr left_lidar1 = pcd_lst[1][0];
+        CloudPtr right_lidar1 = pcd_lst[1][1];
+        CloudPtr back_lidar1 = pcd_lst[1][2];
+
+        CloudPtr src_left_lidar = pcl::make_shared<PointCloud>();
+        CloudPtr src_right_lidar = pcl::make_shared<PointCloud>();
+        CloudPtr src_back_lidar = pcl::make_shared<PointCloud>();
+
+        pcl::copyPointCloud(*left_lidar1, *src_left_lidar);
+        pcl::copyPointCloud(*right_lidar1, *src_right_lidar);
+        pcl::copyPointCloud(*back_lidar1, *src_back_lidar);
+
+        pcl::transformPointCloud(*left_lidar1, *left_lidar1, tans_left);
+        pcl::transformPointCloud(*right_lidar1, *right_lidar1, tans_right * Eigen::Affine3d(trans_mat_right.cast<double>()));
+
+        mat_left =  tans_left * mat_left;
+        mat_right = tans_right * Eigen::Affine3d(trans_mat_right.cast<double>()) * mat_right;
+
+        pcl::IndicedMerge<PointT> merged_back;
+        merged_back.push_back("left", left_lidar1);
+        merged_back.push_back("right", right_lidar1);
+
+        CloudPtr result_pcd = pcl::make_shared<PointCloud>();
+        reg.setInputCloud(back_lidar1);
+        reg.setInputTarget(merged_back.merged_cloud);
+        reg.align(*result_pcd);
+        Eigen::Matrix4f trans_back = reg.getFinalTransformation();
+        pcl::transformPointCloud(*back_lidar1, *back_lidar1, trans_back);
+
+        mat_back = Eigen::Affine3d(trans_back.cast<double>()) * mat_back;
+
+        Eigen::Affine3d trans_back_ground = groundOptimization(back_lidar1);
+
+        pcl::transformPointCloud(*back_lidar1, *back_lidar1, trans_back_ground);
+
+        mat_back =  trans_back_ground * mat_back;
+
+        merged_back.push_back("back", back_lidar1);
+        // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/merged_back.pcd", *merged_back.merged_cloud);
+
+        auto funPlaneOpt = [&]() -> double{
+
+            pcl::IndicedMerge<PointT> merged0, merged1;
+            pcl::KdTreeFLANN<PointT> kd_merged0, kd_merged1;
+            merged0.push_back("l", left_lidar);
+            merged0.push_back("r", right_lidar);
+
+            merged1.push_back("l", left_lidar1);
+            merged1.push_back("r", right_lidar1);
+            merged1.push_back("b", back_lidar1);
+
+            std::unordered_set<int> indices_ground_merged0, indices_ground_merged1;
+            segGround(merged0.merged_cloud, indices_ground_merged0, root["ground_z_threshold"].as<float>());
+            segGround(merged1.merged_cloud, indices_ground_merged1, root["ground_z_threshold"].as<float>());
+
+            kd_merged0.setInputCloud(merged0.merged_cloud);
+            kd_merged1.setInputCloud(merged1.merged_cloud);
+
+            gtsam::NonlinearFactorGraph graph;
+            gtsam::Symbol key_pose_left('p', 1);
+            gtsam::Symbol key_pose_right('p', 2);
+            gtsam::Symbol key_pose_back('p', 3);
+
+            gtsam::SharedNoiseModel plane_noise_model = gtsam::noiseModel::Robust::Create(
+                                    gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                                    gtsam::noiseModel::Isotropic::Sigma(1, 0.5));
+            
+            gtsam::SharedNoiseModel ground_noise_model = gtsam::noiseModel::Robust::Create(
+                                    gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+                                    gtsam::noiseModel::Isotropic::Sigma(1, 0.1));
+
+
+            std::vector<std::pair<int, int>> indices_paires;
+
+            auto func_plane_facror_build = 
+                [&](pcl::IndicedMerge<PointT>& merged,
+                    pcl::KdTreeFLANN<PointT>& kd_merged,
+                    const std::string str0, 
+                    const std::string str1, 
+                    gtsam::Symbol& k0, 
+                    gtsam::Symbol& k1,
+                    std::unordered_set<int>& indices_ground){
+                // visualizeIntersection(merged, kd_merged, indices_paires, str0, str1, 0.1);
+                for (const auto [id0_, id1_] : indices_paires)
+                {
+                    int id0 = merged.idxLocal2Global(str0, id0_);
+                    int id1 = merged.idxLocal2Global(str1, id1_);
+
+                    ConstCloudPtr merged_cloud = merged.merged_cloud;
+                    pcl::Indices indices;
+                    std::vector<float> dists;
+                    kd_merged.radiusSearch(merged_cloud->at(id0), 0.8, indices, dists);
+                    Eigen::Vector3f normal;
+                    if (0.1 < checkPlane<PointT>(merged_cloud, indices, normal)){
+                        if (indices_ground.find(id0) != indices_ground.end() ||
+                            indices_ground.find(id1) != indices_ground.end()){
+                            graph.emplace_shared<ml_calib::LidarJointOptFactor>(k0, k1, ground_noise_model, 
+                                                                                merged_cloud->at(id0).getVector3fMap().cast<double>(),
+                                                                                merged_cloud->at(id1).getVector3fMap().cast<double>(),
+                                                                                normal.cast<double>(), true);
+                        }else{
+                            graph.emplace_shared<ml_calib::LidarJointOptFactor>(k0, k1, plane_noise_model, 
+                                                                                merged_cloud->at(id0).getVector3fMap().cast<double>(),
+                                                                                merged_cloud->at(id1).getVector3fMap().cast<double>(),
+                                                                                normal.cast<double>(), true);
+                        }
+                    }
+                }
+            };
+
+            float pp_voxel_size = 1;
+            pcl::KdTreeFLANN<PointT> kd_left0, kd_right0;
+            kd_right0.setInputCloud(right_lidar);
+            OctreeT octree_left0(pp_voxel_size);
+            octree_left0.setInputCloud(left_lidar);
+            octree_left0.addPointsFromInputCloud();
+            indices_paires.clear();
+            searchInterSection(left_lidar, octree_left0, right_lidar, kd_right0, pp_voxel_size, indices_paires);
+            func_plane_facror_build(merged0, kd_merged0, "l", "r", key_pose_left, key_pose_right, indices_ground_merged0);
+
+
+            OctreeT octree_back1(pp_voxel_size);
+            octree_back1.setInputCloud(back_lidar1);
+            octree_back1.addPointsFromInputCloud();
+            pcl::KdTreeFLANN<PointT> kd_left1, kd_right1;
+            kd_left1.setInputCloud(left_lidar1);
+            kd_right1.setInputCloud(right_lidar1);
+
+            indices_paires.clear();
+            searchInterSection(back_lidar1, octree_back1, left_lidar1, kd_left1, pp_voxel_size, indices_paires);
+            func_plane_facror_build(merged1, kd_merged1, "b", "l", key_pose_back, key_pose_left, indices_ground_merged1);
+
+            indices_paires.clear();
+            searchInterSection(back_lidar1, octree_back1, right_lidar1, kd_right1, pp_voxel_size, indices_paires);
+            func_plane_facror_build(merged1, kd_merged1, "b", "r", key_pose_back, key_pose_right, indices_ground_merged1);
+
+
+            graph.add(gtsam::PriorFactor<gtsam::Pose3>(key_pose_left, gtsam::Pose3::Identity(), gtsam::noiseModel::Constrained::All(6)));
+
+            gtsam::Values initial;
+            initial.insert(key_pose_left, gtsam::Pose3::Identity());
+            initial.insert(key_pose_right, gtsam::Pose3::Identity());
+            initial.insert(key_pose_back, gtsam::Pose3::Identity());
+
+            gtsam::LevenbergMarquardtParams params;
+            // params.setVerbosity("ERROR");  // 输出优化信息
+            params.verbosityLM = gtsam::LevenbergMarquardtParams::VerbosityLM::SUMMARY;
+            gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial, params);
+            double init_error = optimizer.error();
+            std::cout << "Initilization cost: " << init_error << std::endl;
+            gtsam::Values result_ = optimizer.optimize();
+            double opted_error = optimizer.error();
+            std::cout << "Optimized cost: " << opted_error << std::endl;
+            std::cout << "Cost Change: " << init_error - opted_error << std::endl;
+
+            gtsam::Pose3 tr_l = result_.at<gtsam::Pose3>(key_pose_left);
+            gtsam::Pose3 tr_r = result_.at<gtsam::Pose3>(key_pose_right);
+            gtsam::Pose3 tr_b = result_.at<gtsam::Pose3>(key_pose_back);
+
+
+            pcl::transformPointCloud(*left_lidar, *left_lidar, tr_l.matrix());
+            pcl::transformPointCloud(*left_lidar1, *left_lidar1, tr_l.matrix());
+
+            pcl::transformPointCloud(*right_lidar, *right_lidar, tr_r.matrix());
+            pcl::transformPointCloud(*right_lidar1, *right_lidar1, tr_r.matrix());
+
+            pcl::transformPointCloud(*back_lidar1, *back_lidar1, tr_b.matrix());
+
+            mat_left = Eigen::Affine3d(tr_l.matrix()) * mat_left;
+            mat_right = Eigen::Affine3d(tr_r.matrix()) * mat_right;
+            mat_back = Eigen::Affine3d(tr_b.matrix()) * mat_back;
+
+            return init_error - opted_error;
+        };
+
+        ros::Rate rate(10); // 发布频率 10Hz
+        int count = 0;
+        bool opt_finished = false;
+
+        while(ros::ok())
+        {
+            ros::spinOnce();
+
+            double cost_change;
+            if (!opt_finished){
+                cost_change = funPlaneOpt();
+            }
+            Eigen::Matrix4d fix_f = bound_to_mat(Eigen::Vector3d(ml_calib_config.x, ml_calib_config.y, ml_calib_config.z), 
+                                        Eigen::Vector3d(ml_calib_config.pitch_x, ml_calib_config.roll_y, ml_calib_config.yaw_z)).matrix();
+            Eigen::Matrix4d T_L0toL1 = fix_f * pre_map;
+            Eigen::MatrixX4d T_L0toL2 = (mat_front.inverse() * mat_right).matrix();
+            Eigen::MatrixX4d T_L0toL3 = (mat_front.inverse() * mat_back).matrix();
+
+            PointCloud pub_cloud_left, pub_cloud_right, pub_cloud_back;
+            pcl::transformPointCloud(*src_left_lidar, pub_cloud_left, T_L0toL1.cast<float>());
+            pcl::transformPointCloud(*src_right_lidar, pub_cloud_right, (T_L0toL1 * T_L0toL2).cast<float>());
+            pcl::transformPointCloud(*src_back_lidar, pub_cloud_back, (T_L0toL1 * T_L0toL3).cast<float>());
+
+
+            sensor_msgs::PointCloud2 output_l;
+            pcl::toROSMsg(colorPointCloud(pub_cloud_left, Eigen::Vector3i(0,255,0)), output_l);
+            output_l.header.stamp = ros::Time::now();
+            output_l.header.frame_id = "lidar";
+            pub_left.publish(output_l);
+
+            sensor_msgs::PointCloud2 output_r;
+            pcl::toROSMsg(colorPointCloud(pub_cloud_right, Eigen::Vector3i(255,0,255)), output_r);
+            output_r.header.stamp = ros::Time::now();
+            output_r.header.frame_id = "lidar";
+            pub_right.publish(output_r);
+
+            sensor_msgs::PointCloud2 output_b;
+            pcl::toROSMsg(colorPointCloud(pub_cloud_back, Eigen::Vector3i(255,255,0)), output_b);
+            output_b.header.stamp = ros::Time::now();
+            output_b.header.frame_id = "lidar";
+            pub_back.publish(output_b);
+
+            rate.sleep();
+            count++;
+            mat_front = mat_left;
+            if (cost_change < 0.1) {
+                opt_finished = true;
+                std::cout << "Num of optimization: " << count << std::endl;
+                std::cout << "The final cost change:" << cost_change << std::endl;
+
+                std::cout << "left: " << std::endl; 
+                std::cout << "euler: " <<  T_L0toL1.topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)
+                          << ", " << T_L0toL1.topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+                std::cout << T_L0toL1.format(eigen_fmt) << std::endl;
+
+                std::cout << "right: " << std::endl; 
+                std::cout << "euler: " <<  (T_L0toL1 * T_L0toL2).topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)
+                          << ", " << (T_L0toL1 * T_L0toL2).topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+                std::cout << (T_L0toL1 * T_L0toL2).format(eigen_fmt) << std::endl;
+
+                std::cout << "back: " << std::endl; 
+                std::cout << "euler: " <<  (T_L0toL1 * T_L0toL3).topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)  
+                          << ", " << (T_L0toL1 * T_L0toL3).topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+                std::cout << (T_L0toL1 * T_L0toL3).format(eigen_fmt) << std::endl;
+            }
+        }
+
+
+
     }
-
-    // // Eigen::Matrix4f trans_mat = reg.getFinalTransformation();
-    // ml_calib::MLCalib calib;
-    // calib.push_back(front_lidar);
-    // calib.push_back(left_lidar);
-    // calib.push_back(right_lidar);
-    // calib.push_back(back_lidar);
-    // calib.run();
     return 0;
 }

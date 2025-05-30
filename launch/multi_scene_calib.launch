@@ -1,12 +1,15 @@
 <launch>
     <arg name="bag_folder_path" default="ml_bag"/>
-    <arg name="ml_calib_path" default="$(find ml_calib)"/>
+    <arg name="type_code" default="0"/>
+    <!-- <arg name="ml_calib_path" default="$(find ml_calib)"/> -->
     <!-- <param name="current_dir" value="$(env PWD)"/> -->
-    <node pkg="ml_calib" type="ml_calib_node" name="pose_refine_name" output="screen" launch-prefix="gdbserver localhost:3000">
-    <!-- <node pkg="ml_calib" type="ml_calib_node" name="pose_refine_name" output="screen"> -->
-        <param name="project_path" type="string" value="$(arg ml_calib_path)" />
+    <!-- <node pkg="ml_calib" type="ml_calib_node" name="pose_refine_name" output="screen" launch-prefix="gdbserver localhost:3000"> -->
+    <node pkg="ml_calib" type="ml_calib_node" name="ml_calib" output="screen">
+        <param name="project_path" type="string" value="$(find ml_calib)" />
         <param name="bag_folder_path" type="string" value="$(arg bag_folder_path)" />
+        <param name="type_code" type="int" value="$(arg type_code)" />
         <param name="launch_command_dir" type="string" value="$(env PWD)" />
     </node>
     <node pkg="rviz" type="rviz" name="rviz" output="screen" args="-d $(find ml_calib)/rviz/vis_config.rviz"></node>
+    <node pkg="rqt_reconfigure" type="rqt_reconfigure" name="rqt_reconfigure" />
 </launch>

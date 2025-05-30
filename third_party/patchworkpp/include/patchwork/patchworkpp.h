@@ -78,7 +78,7 @@ struct Params
     
     Params() {
         verbose     = false;
-        enable_RNR  = true;
+        enable_RNR  = false;
         enable_RVPF = true;
         enable_TGR  = true;
 
@@ -91,7 +91,7 @@ struct Params
         RNR_ver_angle_thr = -15.0;  // Noise points vertical angle threshold. Downward rays of LiDAR are more likely to generate severe noise points.
         RNR_intensity_thr = 0.2;    // Noise points intensity threshold. The reflected points have relatively small intensity than others.
         
-        sensor_height = 1.723;      
+        sensor_height = 0.023;      
         th_seeds = 0.125;           // threshold for lowest point representatives using in initial seeds selection of ground points.
         th_dist = 0.125;            // threshold for thickenss of ground.
         th_seeds_v = 0.25;          // threshold for lowest point representatives using in initial seeds selection of vertical structural points.
