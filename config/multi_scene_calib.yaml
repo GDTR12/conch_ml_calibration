@@ -24,33 +24,44 @@ bag_files: [*bag0, *bag1]
 
 threshold_plane: 0.4
 
-ground_weight_f_l: 1.0
-ground_weight_f_r: 1.0
-ground_weight_l_r: 1.0
-ground_weight_b_l: 1.0
-ground_weight_b_r: 1.0
+front_lidar_height: 1.2
 
 ground_z_threshold: 1.0
 
-
-pre_mat: [
-        -0.00347673,
-        -0.999951,
-        -0.00929107,
-        -0.1,
-        0.999994,
-        -0.00346313,
-        -0.0014848,
-        7.6564,
-        0.00145256,
-        -0.00929617,
-        0.999956,
-        0.1,
-        0,
-        0,
-        0,
-        1
+front_pose: [
+        0, -1, 0, 0,
+        1, 0, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
 ]
+
+left_pose: [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+]
+
+right_pose: [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+]
+
+back_pose: [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+]
+
+
+fix_front: true
+fix_left: false
+fix_right: false
+fix_back: false
+  
 
 
 
