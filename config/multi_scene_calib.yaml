@@ -10,60 +10,52 @@
 # topic3: &topic3 "/back/rslidar_points"
 
 # chongqing
-# topic0: &topic0 "/front_lidar"
-# topic1: &topic1 "/front_left_lidar"
-# topic2: &topic2 "/front_right_lidar"
-# topic3: &topic3 "/back_lidar"
+topic0: &topic0 "/front_lidar"
+topic1: &topic1 "/front_left_lidar"
+topic2: &topic2 "/front_right_lidar"
+topic3: &topic3 "/back_lidar"
 
 bag0: &bag0 "lidar_front.bag"
 bag1: &bag1 "lidar_back.bag"
-
-
-# lidar_topics: &lidar_topics_all [*topic0, *topic1, *topic2, *topic3]
 bag_files: [*bag0, *bag1]
 
-threshold_plane: 0.4
+# 话题排列顺序，四激光：前左右后 三激光：左右后
+lidar_topics: &lidar_topics_all [*topic0, *topic1, *topic2, *topic3]
 
+# 如果 launch 里的 recalibration_mode 为假， 重新标定所有激光雷达，否则 调整聚光雷达的方案
+
+# 全部重新标定方案
 front_lidar_height: 1.2
 
-ground_z_threshold: 1.0
-
+# 调整聚光雷达的方案, 需要填写下面的所有的位置
+fix_front: false
 front_pose: [
-        0, -1, 0, 0,
-        1, 0, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
+        0.0057, -0.9999,  0.0082, -0.1154,
+        0.9999,  0.0056, -0.0120,  7.6394,
+        0.0120,  0.0083,  0.9999,  0.3534,
+        0.0000,  0.0000,  0.0000,  1.0000
 ]
 
+fix_left: true
 left_pose: [
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
+        -0.9985, -0.0030,  0.0549, -3.1468,
+        0.0044, -0.9996,  0.0266,  5.5552,
+        0.0548,  0.0268,  0.9981,  1.8661,
+        0.0000,  0.0000,  0.0000,  1.0000
 ]
 
+fix_right: true
 right_pose: [
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
+        0.9993,  0.0325, -0.0191,  2.6856,
+        -0.0330,  0.9992, -0.0240,  5.6827,
+        0.0183,  0.0246,  0.9995,  1.8032,
+        0.0000,  0.0000,  0.0000,  1.0000
 ]
 
+fix_back: true
 back_pose: [
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
+        -0.0145,  0.9999,  0.0004, -0.1579,
+        -0.9998, -0.0145, -0.0167, -0.5593,
+        -0.0167, -0.0006,  0.9999,  0.6120,
+        0.0000,  0.0000,  0.0000,  1.0000
 ]
-
-
-fix_front: true
-fix_left: false
-fix_right: false
-fix_back: false
-  
-
-
-
-
-      
