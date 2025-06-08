@@ -8,6 +8,10 @@
 #include <pcl/filters/filter.h>
 #include <pcl/pcl_base.h>
 #include <pcl/visualization/pcl_visualizer.h>
+#include "multi_lidar_calibration/ground_factor.hpp"
+#include "multi_lidar_calibration/ground_joint_opt.hpp"
+#include "multi_lidar_calibration/joint_optimization.hpp"
+#include <stdexcept>
 
 namespace ml_calib
 {
@@ -60,6 +64,30 @@ CloudPtr MLiDAR::getPCDInGlobal(const std::string& pcd_name)
         return transformed_pcd;
     }
     throw std::runtime_error("Source point cloud not found: " + pcd_name);
+}
+
+void MLiDAR::updateGround(double ground_radius)
+{
+    patchwork::PatchWorkpp patchworkpp(patchwork_parameters);
+    ground_indices.clear();
+    for(const auto& [name, source_pcd] : source_pcds)
+    {
+        Eigen::MatrixXf patch_cloud;
+        patch_cloud.resize(source_pcd->size(), 4);
+        for (int i = 0; i < source_pcd->size(); i++)
+        {
+            patch_cloud.row(i) << source_pcd->at(i).x, source_pcd->at(i).y, source_pcd->at(i).z, source_pcd->at(i).intensity;
+        }
+        patchworkpp.estimateGround(patch_cloud);
+        Eigen::VectorXi ground_idx    = patchworkpp.getGroundIndices();
+        ground_indices[name] = std::set<int>();
+        for (int i = 0; i < ground_idx.size(); i++)
+        {
+            if (source_pcd->at(ground_idx[i]).getVector3fMap().norm() < ground_radius){
+                ground_indices[name].insert(ground_idx[i]);
+            }
+        }
+    }
 }
 
 void MLiDAR::correctPose(const Eigen::Matrix4d& mat)
@@ -224,9 +252,6 @@ void MLCalib::buildGroundConstraints()
         
         for (const auto& [id0_, id1_] : idx_pairs)
         {
-            if (pcd0->at(id0_).getVector3fMap().norm() > ground_radius_threshold){
-                continue;
-            }
             int id0 = merged.idxLocal2Global(info.lidar0_name, id0_);
             int id1 = merged.idxLocal2Global(info.lidar1_name, id1_);
 
@@ -238,7 +263,7 @@ void MLCalib::buildGroundConstraints()
             Eigen::Vector3f normal;
             double plane_score = checkPlane<PointT>(merged_cloud, indices, normal);
             if (threshold_plane < plane_score){
-                if (lidar0->ground_indices[info.pcd0_name].find(id0_) != lidar0->ground_indices[info.pcd0_name].end() ||
+                if (lidar0->ground_indices[info.pcd0_name].find(id0_) != lidar0->ground_indices[info.pcd0_name].end() &&
                         lidar1->ground_indices[info.pcd1_name].find(id1_) != lidar1->ground_indices[info.pcd1_name].end()){
                     normal = Eigen::Vector3f::UnitZ();
                     normal.normalize();
@@ -247,10 +272,9 @@ void MLCalib::buildGroundConstraints()
                 double distance = normal.dot(pcd0->at(id0_).getVector3fMap() - pcd1->at(id1_).getVector3fMap());
                 if (distance < project_distance_threshold){
 
-
-
-                    if ((lidar0->ground_indices[info.pcd0_name].find(id0_) != lidar0->ground_indices[info.pcd0_name].end() ||
-                        lidar1->ground_indices[info.pcd1_name].find(id1_) != lidar1->ground_indices[info.pcd1_name].end())){
+                    if ((lidar0->ground_indices[info.pcd0_name].find(id0_) != lidar0->ground_indices[info.pcd0_name].end() &&
+                        lidar1->ground_indices[info.pcd1_name].find(id1_) != lidar1->ground_indices[info.pcd1_name].end()) || 
+                        pcd0->at(id0_).getVector3fMap().norm() < 5){
                         graph.emplace_shared<ml_calib::GroundJointOptFactor>(pcd0->at(id0_).getVector3fMap().cast<double>(),
                                                                             pcd1->at(id1_).getVector3fMap().cast<double>(),
                                                                             lidar0->symbol, lidar1->symbol, ground_noise_model, 
@@ -276,7 +300,6 @@ void MLCalib::buildGroundConstraints()
     for (const auto& [lidar_name, lidar] : lidars)
     {
         if (lidar->initialized){
-            std::cout << lidar->name << " " << lidar->symbol << std::endl;
             initial.insert(lidar->symbol, gtsam::Vector3(0,0,0));
         }
     }
@@ -328,10 +351,6 @@ void MLCalib::buildConstraints()
         
         for (const auto& [id0_, id1_] : idx_pairs)
         {
-            if (pcd0->at(id0_).getVector3fMap().norm() > ground_radius_threshold){
-                continue;
-            }
-
             int id0 = merged.idxLocal2Global(info.lidar0_name, id0_);
             int id1 = merged.idxLocal2Global(info.lidar1_name, id1_);
 
@@ -343,7 +362,7 @@ void MLCalib::buildConstraints()
             Eigen::Vector3f normal;
             double plane_score = checkPlane<PointT>(merged_cloud, indices, normal);
             if (threshold_plane < plane_score){
-                if (lidar0->ground_indices[info.pcd0_name].find(id0_) != lidar0->ground_indices[info.pcd0_name].end() ||
+                if (lidar0->ground_indices[info.pcd0_name].find(id0_) != lidar0->ground_indices[info.pcd0_name].end() &&
                         lidar1->ground_indices[info.pcd1_name].find(id1_) != lidar1->ground_indices[info.pcd1_name].end()){
                     normal = Eigen::Vector3f::UnitZ();
                     normal.normalize();
@@ -358,8 +377,9 @@ void MLCalib::buildConstraints()
                     detal.distance = std::abs(distance);
                     detal.normal = normal.cast<double>();
 
-                    if ((lidar0->ground_indices[info.pcd0_name].find(id0_) != lidar0->ground_indices[info.pcd0_name].end() ||
-                        lidar1->ground_indices[info.pcd1_name].find(id1_) != lidar1->ground_indices[info.pcd1_name].end())){
+                    if ((lidar0->ground_indices[info.pcd0_name].find(id0_) != lidar0->ground_indices[info.pcd0_name].end() &&
+                        lidar1->ground_indices[info.pcd1_name].find(id1_) != lidar1->ground_indices[info.pcd1_name].end()) || 
+                        pcd0->at(id0_).getVector3fMap().norm() < 5){
                         graph.emplace_shared<ml_calib::LidarJointOptFactor>(lidar0->symbol, lidar1->symbol, ground_noise_model, 
                                                                             pcd0->at(id0_).getVector3fMap().cast<double>(),
                                                                             pcd1->at(id1_).getVector3fMap().cast<double>(),
@@ -387,7 +407,6 @@ void MLCalib::buildConstraints()
     for (const auto& [lidar_name, lidar] : lidars)
     {
         if (lidar->initialized){
-            std::cout << lidar->name << " " << lidar->symbol << std::endl;
             initial.insert(lidar->symbol, gtsam::Pose3::Identity());
         }
     }
@@ -418,6 +437,11 @@ std::vector<MLiDARConstraintDetail> MLCalib::getConstraintDetails(int id)
     return constraint_details[id];
 }
 
+struct TmpVoxelInfo{
+    int idx0, idx1;
+    double dist;
+};
+
 void MLCalib::searchInterSection(ConstCloudPtr pcd0, 
                         ConstCloudPtr pcd1, 
                         double threshould,
@@ -426,6 +450,8 @@ void MLCalib::searchInterSection(ConstCloudPtr pcd0,
     idx_pairs.clear();
 
     std::unordered_map<VoxelIndex, std::vector<int>, VoxelIndexHash> voxel_map;
+    std::unordered_map<VoxelIndex, TmpVoxelInfo, VoxelIndexHash> voxel_occupancied;
+
     for (int i = 0; i < pcd0->size(); ++i) {
         auto point = pcd0->points[i];
         // 计算点所属体素索引
@@ -484,7 +510,7 @@ void MLCalib::searchInterSection(ConstCloudPtr pcd0,
             }
         }
         if (idx_pcd1 != -1){
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 2; i++)
             {
                 pcl::Indices indices_;
                 std::vector<float> dists;
@@ -504,8 +530,27 @@ void MLCalib::searchInterSection(ConstCloudPtr pcd0,
                     }
                 }
             }
-            // std::cout << idx_pcd0 << " " << idx_pcd1 << std::endl;
-            idx_pairs[idx_pcd0] = idx_pcd1;
+            auto point = pcd0->points[idx_pcd0];
+            VoxelIndex idx;
+            idx.x = static_cast<int>(std::floor(point.x / (1.2 * octree_resolution)));
+            idx.y = static_cast<int>(std::floor(point.y / (1.2 * octree_resolution)));
+            idx.z = static_cast<int>(std::floor(point.z / (1.2 * octree_resolution)));
+            if (voxel_occupancied.find(idx) != voxel_occupancied.end()){
+                if (voxel_occupancied[idx].dist > min_dist){
+                    idx_pairs.erase(voxel_occupancied[idx].idx0);
+                    idx_pairs[idx_pcd0] = idx_pcd1;
+
+                    voxel_occupancied[idx].idx0 = idx_pcd0;
+                    voxel_occupancied[idx].idx1 = idx_pcd1;
+                    voxel_occupancied[idx].dist = min_dist;
+                }
+            }else{
+
+                idx_pairs[idx_pcd0] = idx_pcd1;
+                voxel_occupancied[idx].idx0 = idx_pcd0;
+                voxel_occupancied[idx].idx1 = idx_pcd1;
+                voxel_occupancied[idx].dist = min_dist;
+            }
         }
     }
 }
@@ -561,12 +606,12 @@ void MLCalib::groundOpt(const std::string& lidar_name, const std::string& source
         throw std::runtime_error("Point cloud is empty: " + source_name);
     }
 
-    pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test3.pcd", *pcd_tarnsformed);
+    // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test3.pcd", *pcd_tarnsformed);
     Eigen::Affine3d trans = groundOptimization(pcd_tarnsformed, lidar->ground_indices[source_name], -root_lidar_height);
     // std::cout << trans.matrix() << std::endl;
     CloudPtr pcd_transed = pcl::make_shared<PointCloud>();
     pcl::transformPointCloud(*pcd_tarnsformed, *pcd_transed, trans.matrix().cast<float>());
-    pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test4.pcd", *pcd_tarnsformed);
+    // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test4.pcd", *pcd_tarnsformed);
     // std::cout << "euler: " << trans.rotation().eulerAngles(0, 1, 2 ).transpose();
     // std::cout << "trans: " << trans.translation().transpose();
     lidar->pose = trans.matrix() * lidar->pose.matrix();

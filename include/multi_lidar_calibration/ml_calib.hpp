@@ -14,14 +14,10 @@
 #include <map>
 #include <patchwork/patchworkpp.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
-#include <stdexcept>
 #include <string>
-#include <tuple>
 #include <unordered_map>
 #include <vector>
-#include "multi_lidar_calibration/ground_factor.hpp"
-#include "multi_lidar_calibration/ground_joint_opt.hpp"
-#include "multi_lidar_calibration/joint_optimization.hpp"
+
 
 namespace pcl
 {
@@ -210,6 +206,8 @@ public:
 
     void correctPose(const Eigen::Vector3d& euler, const Eigen::Vector3d& translation);
 
+    void updateGround(double ground_radius);
+
     CloudPtr operator[](const std::string& name);
  
     Eigen::Matrix4d getPose(){ return correct_mat * pose; }
@@ -234,6 +232,8 @@ private:
 
     Eigen::Matrix4d correct_mat = Eigen::Matrix4d::Identity();
 
+    double ground_radius = 100;
+
     bool initialized = false;
 
     friend class MLCalib;
@@ -244,7 +244,6 @@ private:
 struct VoxelIndex {
     int x, y, z;
 
-    // 必须重载==运算符用于哈希比较
     bool operator==(const VoxelIndex& other) const {
         return x == other.x && y == other.y && z == other.z;
     }
@@ -305,6 +304,19 @@ public:
         }
     }
 
+    void updatePlaneGroundNoise(double sigma_ground, double sigma_plane)
+    {
+        ground_noise_model = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+            gtsam::noiseModel::Isotropic::Sigma(1, sigma_ground)
+        );
+
+        plane_noise_model = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+            gtsam::noiseModel::Isotropic::Sigma(1, sigma_plane)
+        );
+    }
+
 
 private:
 
@@ -359,8 +371,6 @@ public:
     double project_distance_threshold = 0.3; // 默认投影距离阈值
 
     double threshold_plane = 0.04;
-
-    double ground_radius_threshold = 40;
 
     double octree_resolution = 1; // 默认八叉树分辨率
     
