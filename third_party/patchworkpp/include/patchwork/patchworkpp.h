@@ -101,8 +101,8 @@ struct Params
         uprightness_thr = 0.707;    // threshold of uprightness using in Ground Likelihood Estimation(GLE). Please refer paper for more information about GLE.
         adaptive_seed_selection_margin = -1.2; // parameter using in initial seeds selection
 
-        num_sectors_each_zone = {16, 32, 54, 32};   // Setting of Concentric Zone Model(CZM)
-        num_rings_each_zone = {2, 4, 4, 4};         // Setting of Concentric Zone Model(CZM)
+        num_sectors_each_zone = {20, 32, 54, 32};   // Setting of Concentric Zone Model(CZM)
+        num_rings_each_zone = {6, 6, 6, 6};         // Setting of Concentric Zone Model(CZM)
 
         max_flatness_storage = 1000;    // The maximum number of flatness storage
         max_elevation_storage = 1000;   // The maximum number of elevation storage
