@@ -562,17 +562,19 @@ Eigen::Affine3d MLCalib::groundOptimization(CloudPtr pcd, std::set<int>& ground_
 
     for (auto idx: ground_idx)
     {
-        gtsam::SharedNoiseModel noise_model;
-        // if (pcd->at(idx).z > 1.5){
-        //     noise_model = gtsam::noiseModel::mEstimator::Tukey::Create(4.685);
-        // }else{
-            noise_model = gtsam::noiseModel::Robust::Create(
-                gtsam::noiseModel::mEstimator::Huber::Create(1.345),
-                gtsam::noiseModel::Isotropic::Sigma(1, 0.1)
-            );
+        // gtsam::SharedNoiseModel noise_model;
+        // // if (pcd->at(idx).z > 1.5){
+        // //     noise_model = gtsam::noiseModel::mEstimator::Tukey::Create(4.685);
+        // // }else{
+        //     noise_model = gtsam::noiseModel::Robust::Create(
+        //         gtsam::noiseModel::mEstimator::Huber::Create(1.345),
+        //         gtsam::noiseModel::Isotropic::Sigma(1, 0.1)
+        //     );
+        // // }
+        // if (pcd->at(idx).getVector3fMap().norm() < 10){
+            graph.emplace_shared<ml_calib::LiDARGroundPointFactor>(
+                key, height, (Eigen::Vector3d() << pcd->at(idx).getVector3fMap().cast<double>()).finished(), plane_noise_model);
         // }
-        graph.emplace_shared<ml_calib::LiDARGroundPointFactor>(
-            key, height, (Eigen::Vector3d() << pcd->at(idx).getVector3fMap().cast<double>()).finished(), noise_model);
     }
     
     gtsam::Values initial;

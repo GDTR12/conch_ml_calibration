@@ -458,11 +458,15 @@ int main(int argc, char* argv[])
 
     Eigen::IOFormat eigen_fmt(-1, 0, ", ", ", \n");
 
-    
-    Eigen::Affine3d mat_front(Eigen::Affine3d::Identity());
-    Eigen::Affine3d mat_left(Eigen::Affine3d::Identity());
-    Eigen::Affine3d mat_right(Eigen::Affine3d::Identity());
-    Eigen::Affine3d mat_back(Eigen::Affine3d::Identity());
+    auto getPrePose = [&](const std::string& name){
+        std::vector<double> pre_mat_vec = root[name].as<std::vector<double>>();
+        if (pre_mat_vec.size() != 16){
+            std::cout << "Pre-mat size is not 16, please check the config file." << std::endl;
+            exit(0);
+        }
+        Eigen::Matrix4d pose = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(pre_mat_vec.data());;
+        return pose;
+    };
 
     updatePatchWorkParameters();
     ml_calib::MLCalib calib(fs::path(g3reg_config_path) / "apollo_lc_bm/fpfh_pagor.yaml");
@@ -474,15 +478,6 @@ int main(int argc, char* argv[])
         calib.addLiDAR("back");
 
 
-        auto getPrePose = [&](const std::string& name){
-            std::vector<double> pre_mat_vec = root[name].as<std::vector<double>>();
-            if (pre_mat_vec.size() != 16){
-                std::cout << "Pre-mat size is not 16, please check the config file." << std::endl;
-                exit(0);
-            }
-            Eigen::Matrix4d pose = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(pre_mat_vec.data());;
-            return pose;
-        };
         int fl_id(-1), fr_id(-1), lr_id(-1), bl_id(-1), br_id(-1);
         if (recalibration_mode){
             calib["front"]->push_back("bag_front", pcd_lst[0][0]);
@@ -514,11 +509,13 @@ int main(int argc, char* argv[])
 
             calib.updateInitPose();
 
-            CloudPtr merged_back = calib["front"]->getPCDInGlobal("bag_back");
+            CloudPtr merged_back(new PointCloud);
+            *merged_back += *calib["front"]->getPCDInGlobal("bag_back");
             *merged_back += *calib["left"]->getPCDInGlobal("bag_back");
             *merged_back += *calib["right"]->getPCDInGlobal("bag_back");
 
-            CloudPtr merged_front = calib["front"]->getPCDInGlobal("bag_front");
+            CloudPtr merged_front(new PointCloud);
+            *merged_front += *calib["front"]->getPCDInGlobal("bag_front");
             *merged_front += *calib["left"]->getPCDInGlobal("bag_front");
             *merged_front += *calib["right"]->getPCDInGlobal("bag_front");
 
@@ -618,23 +615,23 @@ int main(int argc, char* argv[])
                     CloudPtr back_lidar1 = calib["back"]->getPCDInGlobal("bag_back");
 
                     pcl::toROSMsg(colorPointCloud(*front_lidar1, Eigen::Vector3i(200,200,200)), output_f);
-                    output_f.header.stamp = output_b.header.stamp = ros::Time::now();
-                    output_f.header.frame_id = output_b.header.frame_id = "lidar";
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
                     pub_back_bag_f.publish(output_f);
                     
                     pcl::toROSMsg(colorPointCloud(*left_lidar1, Eigen::Vector3i(255, 255, 0)), output_f);
-                    output_f.header.stamp = output_b.header.stamp = ros::Time::now();
-                    output_f.header.frame_id = output_b.header.frame_id = "lidar";
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
                     pub_back_bag_l.publish(output_f);
 
                     pcl::toROSMsg(colorPointCloud(*right_lidar1, Eigen::Vector3i(255, 0, 255)), output_f);
-                    output_f.header.stamp = output_b.header.stamp = ros::Time::now();
-                    output_f.header.frame_id = output_b.header.frame_id = "lidar";
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
                     pub_back_bag_r.publish(output_f);
 
                     pcl::toROSMsg(colorPointCloud(*back_lidar1, Eigen::Vector3i(0,204,0)), output_f);
-                    output_f.header.stamp = output_b.header.stamp = ros::Time::now();
-                    output_f.header.frame_id = output_b.header.frame_id = "lidar";
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
                     pub_back_bag_b.publish(output_f);
                 }
                 ros::spinOnce();
@@ -794,10 +791,265 @@ int main(int argc, char* argv[])
         }
 
     }else{
+        calib.addLiDAR("left");
+        calib.addLiDAR("right");
+        calib.addLiDAR("back");
+        int lr_id(-1), bl_id(-1), br_id(-1);
+        if (recalibration_mode){
+            calib["left"]->push_back("bag_front", pcd_lst[0][0]);
+            calib["right"]->push_back("bag_front", pcd_lst[0][1]);
+            calib["back"]->push_back("bag_front", pcd_lst[0][2]);
 
+            calib["left"]->push_back("bag_back", pcd_lst[1][0]);
+            calib["right"]->push_back("bag_back", pcd_lst[1][1]);
+            calib["back"]->push_back("bag_back", pcd_lst[1][2]);
+
+            Eigen::Matrix4d left_lidar_pose = getPrePose("left_pose");
+            calib.setLidarPose("left", left_lidar_pose);
+            calib.setRootLidar("left");
+            calib.setRootLidarHeight(root["front_lidar_height"].as<double>());
+            calib.setLidarFixed("left", true);
+
+            pcl::Indices indices;
+            CloudPtr sectored_left_pcd = pcdSector<PointT>(calib["left"]->source_pcds["bag_front"], -180, 0, indices);
+            indices.clear();
+            CloudPtr sectored_right_pcd = pcdSector<PointT>(calib["right"]->source_pcds["bag_front"], -90, 90, indices);
+
+            calib["left"]->push_back("bag_left_sector", sectored_left_pcd);
+            calib["right"]->push_back("bag_right_sector", sectored_right_pcd);
+
+            calib["left"]->addTargetLeaf("bag_left_sector", calib["right"], "bag_right_sector");
+            calib.updateInitPose();
+
+
+            CloudPtr merged_back = calib["left"]->getPCDInGlobal("bag_back");
+            *merged_back += *calib["right"]->getPCDInGlobal("bag_back");
+            pcl::transformPointCloud(*merged_back, *merged_back, calib["left"]->getPose().inverse().cast<float>());  
+            indices.clear();
+            CloudPtr sectored_back = pcdSector<PointT>(merged_back, 30, 150, indices);
+            pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test4.pcd", *sectored_back);
+
+            // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test5.pcd", *merged_back);
+            
+            calib["left"]->push_back("merged_back", sectored_back);
+            calib["left"]->addTargetLeaf("merged_back", calib["back"], "bag_back");
+            calib.updateInitPose();
+
+            lr_id = calib.addConstraint("left", "bag_front", "right", "bag_front", ml_calib_config.lr_weight);
+            bl_id = calib.addConstraint("left", "bag_back", "back", "bag_back",  ml_calib_config.bl_weight);
+            br_id = calib.addConstraint("right", "bag_back", "back", "bag_back",  ml_calib_config.br_weight);
+        }else{
+            bool fix_left = root["fix_left"].as<bool>();
+            calib.setLidarPose("left", getPrePose("left_pose"));
+            calib.setLidarFixed("left", fix_left);
+
+            bool fix_right = root["fix_right"].as<bool>();
+            calib.setLidarPose("right", getPrePose("right_pose"));
+            calib.setLidarFixed("right", fix_right);
+
+            bool fix_back = root["fix_back"].as<bool>();
+            calib.setLidarPose("back", getPrePose("back_pose"));
+            calib.setLidarFixed("back", fix_back);
+
+            if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_front.bag") != bag_file_lst.end()){
+                calib["left"]->push_back("bag_front", pcd_lst[0][0]);
+                calib["right"]->push_back("bag_front", pcd_lst[0][1]);
+                calib["back"]->push_back("bag_front", pcd_lst[0][2]);
+            }
+            if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end()){
+                calib["left"]->push_back("bag_back", pcd_lst[1][0]);
+                calib["right"]->push_back("bag_back", pcd_lst[1][1]);
+                calib["back"]->push_back("bag_back", pcd_lst[1][2]);
+            }
+
+            if (!fix_left || !fix_right)
+                lr_id = calib.addConstraint("left", "bag_front", "right", "bag_front", ml_calib_config.lr_weight);
+            if (!fix_back || !fix_left)
+                bl_id = calib.addConstraint("left", "bag_back", "back", "bag_back",  ml_calib_config.bl_weight);
+            if (!fix_back || !fix_right)
+                br_id = calib.addConstraint("right", "bag_back", "back", "bag_back",  ml_calib_config.br_weight);
+        }
+
+        auto ros_spin = [&](){
+            ros::Rate rate(20);
+            while(ros::ok()){
+
+                sensor_msgs::PointCloud2 output_f;
+                if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_front.bag") != bag_file_lst.end()){
+                    CloudPtr left_lidar = calib["left"]->getPCDInGlobal("bag_front");
+                    CloudPtr right_lidar = calib["right"]->getPCDInGlobal("bag_front");
+                    CloudPtr back_lidar = calib["back"]->getPCDInGlobal("bag_front");
+
+                    pcl::toROSMsg(colorPointCloud(*left_lidar, Eigen::Vector3i(255, 255, 0)), output_f);
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
+                    pub_front_bag_l.publish(output_f);
+
+                    pcl::toROSMsg(colorPointCloud(*right_lidar, Eigen::Vector3i(255, 0, 255)), output_f);
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
+                    pub_front_bag_r.publish(output_f);
+
+                    pcl::toROSMsg(colorPointCloud(*back_lidar, Eigen::Vector3i(0,204,0)), output_f);
+                    output_f.header.stamp= ros::Time::now();
+                    output_f.header.frame_id = "lidar";
+                    pub_front_bag_b.publish(output_f);
+                }
+                if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end()){
+
+                    CloudPtr left_lidar1 = calib["left"]->getPCDInGlobal("bag_back");
+                    CloudPtr right_lidar1 = calib["right"]->getPCDInGlobal("bag_back");
+                    CloudPtr back_lidar1 = calib["back"]->getPCDInGlobal("bag_back");
+                    
+                    pcl::toROSMsg(colorPointCloud(*left_lidar1, Eigen::Vector3i(255, 255, 0)), output_f);
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
+                    pub_back_bag_l.publish(output_f);
+
+                    pcl::toROSMsg(colorPointCloud(*right_lidar1, Eigen::Vector3i(255, 0, 255)), output_f);
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
+                    pub_back_bag_r.publish(output_f);
+
+                    pcl::toROSMsg(colorPointCloud(*back_lidar1, Eigen::Vector3i(0,204,0)), output_f);
+                    output_f.header.stamp = ros::Time::now();
+                    output_f.header.frame_id = "lidar";
+                    pub_back_bag_b.publish(output_f);
+                }
+                ros::spinOnce();
+                rate.sleep();
+            }
+        };
+        std::thread thd_ros_spin(ros_spin);
+        thd_ros_spin.detach();
+        bool pub_ground = false;
+        while(ros::ok()){
+            std::unique_lock<std::mutex> lock(mtx_config);
+            if (config_changed){
+                updatePatchWorkParameters();
+                calib["left"]->updateGround(ml_calib_config.left_lidar_ground_radius);
+                calib["right"]->updateGround(ml_calib_config.right_lidar_ground_radius);
+                calib["back"]->updateGround(ml_calib_config.back_lidar_ground_radius);
+                calib.updatePlaneGroundNoise(ml_calib_config.ground_noise, ml_calib_config.plane_noise);
+
+                if(lr_id >= 0) calib.updateWeight(lr_id, ml_calib_config.lr_weight);
+                if(bl_id >= 0) calib.updateWeight(bl_id, ml_calib_config.bl_weight);
+                if(br_id >= 0) calib.updateWeight(br_id, ml_calib_config.br_weight);
+
+                calib.threshold_plane = ml_calib_config.plane_threshold;
+                Eigen::Vector3d map_correct_trans = Eigen::Vector3d(ml_calib_config.x, ml_calib_config.y, ml_calib_config.z);
+                Eigen::Vector3d map_correct_rot = Eigen::Vector3d(ml_calib_config.pitch_x, ml_calib_config.roll_y, ml_calib_config.yaw_z);
+                calib.correctMapPrePose(map_correct_rot, map_correct_trans);
+                pub_ground = true;
+                config_changed = false;
+            }else{
+                    pub_ground = false;
+            }
+            lock.unlock();
+
+            std::cout << "\n========================================================================================" << std::endl;
+            ros::Time start = ros::Time::now();
+            calib.step(ml_calib_config.use_ground_optimization);
+            std::cout << "Opt cost time: " << (ros::Time::now() - start).toSec() << std::endl;
+
+            std::cout << "\n############################ Left transformation ############################\n";
+            std::cout << "Euler rpy(rad), xyz(m): \n" << calib["left"]->getPose().topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt) 
+                        << ", " << calib["left"]->getPose().topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+            std::cout << "Matrix: \n" << calib["left"]->getPose().format(eigen_fmt) << std::endl;
+            std::cout << "\n############################ Right transformation ###########################\n";
+            std::cout << "Euler rpy(rad), xyz(m): \n" << calib["right"]->getPose().topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)
+                        << ", " << calib["right"]->getPose().topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+            std::cout << "Matrix: \n" << calib["right"]->getPose().format(eigen_fmt) << std::endl;
+            std::cout << "\n############################ Back transformation ############################\n";
+            std::cout << "Euler rpy(rad), xyz(m): \n" << calib["back"]->getPose().topLeftCorner<3,3>().eulerAngles(0, 1, 2).transpose().format(eigen_fmt)
+                        << ", " << calib["back"]->getPose().topRightCorner(3,1).transpose().format(eigen_fmt) << std::endl;
+            std::cout << "Matrix: \n" << calib["back"]->getPose().format(eigen_fmt) << std::endl;
+
+            visualization_msgs::MarkerArray marker_array_front, marker_array_back;
+            visualization_msgs::MarkerArray marker_array_norm_front, marker_array_norm_back;
+
+            pcl::shared_ptr<pcl::PointCloud<pcl::PointXYZRGBA>> intersected_front_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
+            intersected_front_pcd->header.frame_id = "lidar";
+            intersected_front_pcd->header.stamp = ros::Time::now().toNSec() / 1000;
+
+            pcl::shared_ptr<pcl::PointCloud<pcl::PointXYZRGBA>> intersected_back_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
+            intersected_front_pcd->header.frame_id = "lidar";
+            intersected_front_pcd->header.stamp = ros::Time::now().toNSec() / 1000;
+
+            sensor_msgs::PointCloud2 ground_msg;
+            CloudPtr ground_pcd = pcl::make_shared<PointCloud>();
+            auto add_pcd_by_indices = [](CloudPtr& source, CloudPtr& target, std::set<int>& indices){
+                for (int idx : indices)
+                    source->push_back(target->at(idx));
+            };
+
+            if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_front.bag") != bag_file_lst.end()){
+                CloudPtr left_lidar = calib["left"]->getPCDInGlobal("bag_front");
+                CloudPtr right_lidar = calib["right"]->getPCDInGlobal("bag_front");
+                CloudPtr back_lidar = calib["back"]->getPCDInGlobal("bag_front");
+                
+                if (pub_ground){
+                    ground_pcd->clear();
+                    add_pcd_by_indices(ground_pcd, left_lidar, calib["left"]->ground_indices["bag_front"]);
+                    add_pcd_by_indices(ground_pcd, right_lidar, calib["right"]->ground_indices["bag_front"]);
+                    add_pcd_by_indices(ground_pcd, back_lidar, calib["back"]->ground_indices["bag_front"]);
+                    pcl::toROSMsg(*ground_pcd, ground_msg);
+                    ground_msg.header.frame_id = "lidar";
+                    ground_msg.header.stamp = ros::Time::now();
+                    pub_groud_front.publish(ground_msg);
+                }
+
+                if (lr_id >= 0){
+                    auto detail_lr = calib.getConstraintDetails(lr_id);
+                    constructMarker(marker_array_front, detail_lr, left_lidar, right_lidar, intersected_front_pcd, 0);
+                    constructMarker(marker_array_norm_front, detail_lr, left_lidar, right_lidar, intersected_front_pcd, 1);
+                }
+            }
+            if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end()){
+                CloudPtr left_lidar1 = calib["left"]->getPCDInGlobal("bag_back");
+                CloudPtr right_lidar1 = calib["right"]->getPCDInGlobal("bag_back");
+                CloudPtr back_lidar1 = calib["back"]->getPCDInGlobal("bag_back");
+                
+                if (pub_ground){
+                    ground_pcd->clear();
+                    add_pcd_by_indices(ground_pcd, left_lidar1, calib["left"]->ground_indices["bag_back"]);
+                    add_pcd_by_indices(ground_pcd, right_lidar1, calib["right"]->ground_indices["bag_back"]);
+                    add_pcd_by_indices(ground_pcd, back_lidar1, calib["back"]->ground_indices["bag_back"]);
+                    pcl::toROSMsg(*ground_pcd, ground_msg);
+                    ground_msg.header.frame_id = "lidar";
+                    ground_msg.header.stamp = ros::Time::now();
+                    pub_groud_back.publish(ground_msg);
+                }
+
+                if (bl_id >= 0){
+                    auto detail_bl = calib.getConstraintDetails(bl_id);
+                    constructMarker(marker_array_back, detail_bl, left_lidar1, back_lidar1, intersected_back_pcd, 0);
+                    constructMarker(marker_array_norm_back, detail_bl, left_lidar1, back_lidar1, intersected_back_pcd, 1);
+                }
+                if (br_id >= 0){
+                    auto detail_br = calib.getConstraintDetails(br_id);
+                    constructMarker(marker_array_back, detail_br, right_lidar1, back_lidar1, intersected_back_pcd, 0);
+                    constructMarker(marker_array_norm_back, detail_br, right_lidar1, back_lidar1, intersected_back_pcd, 1);
+                }
+            }
+
+            pub_constraint_front.publish(marker_array_front);
+            pub_constraint_back.publish(marker_array_back);
+            pub_normal_front.publish(marker_array_norm_front);
+            pub_normal_back.publish(marker_array_norm_back);
+
+            sensor_msgs::PointCloud2 output_front_intersected;
+            pcl::toROSMsg(*intersected_front_pcd, output_front_intersected);
+            output_front_intersected.header.frame_id = "lidar";
+            output_front_intersected.header.stamp = ros::Time::now();
+            pub_intersection_front.publish(output_front_intersected);
+
+            sensor_msgs::PointCloud2 output_back_intersected;
+            pcl::toROSMsg(*intersected_back_pcd, output_back_intersected);
+            output_back_intersected.header.frame_id = "lidar";
+            output_back_intersected.header.stamp = ros::Time::now();
+            pub_intersection_back.publish(output_back_intersected);
+        }
     }
-
-
-   
     return 0;
 }
