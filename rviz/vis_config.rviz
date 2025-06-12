@@ -71,7 +71,7 @@ Visualization Manager:
           Marker Topic: /ml_calib/constraint_front
           Name: distance
           Namespaces:
-            {}
+            constraint: true
           Queue Size: 10
           Value: true
         - Alpha: 1
@@ -107,7 +107,7 @@ Visualization Manager:
           Marker Topic: /ml_calib/normal_front
           Name: normal
           Namespaces:
-            {}
+            constraint: true
           Queue Size: 10
           Value: true
         - Alpha: 1
@@ -222,7 +222,7 @@ Visualization Manager:
           Use Fixed Frame: true
           Use rainbow: true
           Value: true
-      Enabled: false
+      Enabled: true
       Name: bag_front
     - Class: rviz/Group
       Displays:
@@ -259,7 +259,7 @@ Visualization Manager:
           Marker Topic: /ml_calib/constraint_back
           Name: distance
           Namespaces:
-            constraint: true
+            {}
           Queue Size: 10
           Value: true
         - Class: rviz/MarkerArray
@@ -267,7 +267,7 @@ Visualization Manager:
           Marker Topic: /ml_calib/normal_back
           Name: norm
           Namespaces:
-            constraint: true
+            {}
           Queue Size: 10
           Value: true
         - Alpha: 1
@@ -382,7 +382,7 @@ Visualization Manager:
           Use Fixed Frame: true
           Use rainbow: true
           Value: true
-      Enabled: true
+      Enabled: false
       Name: bag_back
     - Class: rviz/Group
       Displays:
@@ -472,7 +472,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/ThirdPersonFollower
-      Distance: 45.86927032470703
+      Distance: 47.1839599609375
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -480,17 +480,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 1.8364160060882568
-        Y: 8.63444709777832
+        X: -5.057377815246582
+        Y: 9.164134979248047
         Z: -5.229007365414873e-05
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.5697963237762451
+      Pitch: 1.3547964096069336
       Target Frame: <Fixed Frame>
-      Yaw: 1.764008641242981
+      Yaw: 4.51219367980957
     Saved: ~
 Window Geometry:
   Displays:
