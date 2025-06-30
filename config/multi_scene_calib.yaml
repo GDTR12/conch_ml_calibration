@@ -4,59 +4,61 @@
 # topic2: &topic2 "/front_right/rslidar_points"
 # topic3: &topic3 "/back/rslidar_points"
 
-# ruomaoshan
-# topic1: &topic1 "/front_left/rslidar_points"
-# topic2: &topic2 "/front_right/rslidar_points"
-# topic3: &topic3 "/back/points"
-
 # chongqing
 topic0: &topic0 "/front_lidar"
 topic1: &topic1 "/front_left_lidar"
 topic2: &topic2 "/front_right_lidar"
 topic3: &topic3 "/back_lidar"
 
+# ruomaoshan
+topic4: &topic4 "/front_left/rslidar_points"
+topic5: &topic5 "/front_right/rslidar_points"
+topic6: &topic6 "/back/points"
+
 bag0: &bag0 "lidar_front.bag"
 bag1: &bag1 "lidar_back.bag"
 bag_files: [*bag0, *bag1]
+# bag_files: [*bag0]
+# bag_files: [*bag1]
 
 # 话题排列顺序，四激光：前左右后 三激光：左右后
 lidar_topics: &lidar_topics_all [*topic0, *topic1, *topic2, *topic3]
-# lidar_topics: &lidar_topics_all [*topic1, *topic2, *topic3]
+# lidar_topics: &lidar_topics_all [*topic4, *topic5, *topic6]
 
 # 如果 launch 里的 recalibration_mode 为假， 重新标定所有激光雷达，否则 调整聚光雷达的方案
 
 # 全部重新标定方案
 front_lidar_height: 1.2
 
-# 调整聚光雷达的方案, 需要填写下面的所有的位置
+# 调整雷达的方案, 需要填写下面的所有的位置,要调整的雷达不固定
 fix_front: false
 front_pose: [
- 0.0202937,  -0.999622, -0.0185641, -0.0841609, 
-  0.999543,  0.0207014, -0.0220379,    7.78815, 
- 0.0224138, -0.0181084,   0.999585,   0.522669, 
-         0,          0,          0,          1
+        -0.00622758,    -1.00003, -0.00089629,   -0.207866, 
+        0.997189, -0.00621222,  -0.0746006,     7.58107, 
+        0.0746497, -0.00137265,    0.997219,    0.423002, 
+                0,           0,           0,           1
 ]
 
 fix_left: true
 left_pose: [
-        -0.999268, -0.0313249, -0.0219625,   -3.13494, 
-        0.0293781,  -0.996035,  0.0839667,    5.72013, 
-        -0.0245057,    0.08326,   0.996226,    2.33457, 
-                0,          0,          0,          1
+        -0.999865,  -0.0124762,   -0.010709,    -3.19644, 
+        0.0131336,   -0.997883,  -0.0636961,     5.45278, 
+        -0.00989169,  -0.0638282,    0.997912,     1.90642, 
+                0,           0,           0,           1
 ]
 
 fix_right: true
 right_pose: [
-        0.998815,  0.00723224,  -0.0481223,     2.73855, 
-        -0.00419909,    0.998015,   0.0628352,     5.84418, 
-        0.0484812,  -0.0625587,    0.996863,     2.42325, 
-                0,           0,           0,           1
+        0.99738, -0.0640465, -0.0336222,    2.66383, 
+        0.0648304,   0.997637,  0.0227653,    5.62352, 
+        0.0320847, -0.0248854,   0.999175,     1.9239, 
+                0,          0,          0,          1
 ]
 
 fix_back: true
 back_pose: [
- -0.0204848,     0.99978,  0.00451732,   -0.107299, 
-  -0.998236,  -0.0207046,   0.0556518,   -0.420217, 
-  0.0557331, -0.00336933,     0.99844,     1.64536, 
-          0,           0,           0,           1
+        -0.0202592,   0.999755, 0.00896443,  -0.047617, 
+        -0.992128, -0.0189948,  -0.123776,  -0.622398, 
+        -0.123575, -0.0114015,    0.99227,   0.680518, 
+                0,          0,          0,          1
 ]

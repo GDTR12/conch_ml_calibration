@@ -477,9 +477,18 @@ int main(int argc, char* argv[])
         calib.addLiDAR("right");
         calib.addLiDAR("back");
 
+        // CloudPtr cloud(new PointCloud);
+        // for (auto p : *pcd_lst[0][0])
+        // {
+        //     if (p.getVector3fMap().norm() < 10){
+        //         continue;
+        //     }
+        //     cloud->push_back(p);   
+        // }
 
         int fl_id(-1), fr_id(-1), lr_id(-1), bl_id(-1), br_id(-1);
         if (recalibration_mode){
+            
             calib["front"]->push_back("bag_front", pcd_lst[0][0]);
             calib["left"]->push_back("bag_front", pcd_lst[0][1]);
             calib["right"]->push_back("bag_front", pcd_lst[0][2]);
@@ -491,10 +500,13 @@ int main(int argc, char* argv[])
             calib["back"]->push_back("bag_back", pcd_lst[1][3]);
 
             Eigen::Matrix4d front_lidar_pose = getPrePose("front_pose");
-            calib.setLidarPose("front", front_lidar_pose);
             calib.setRootLidar("front");
-            calib.setRootLidarHeight(root["front_lidar_height"].as<double>());
-            calib.setLidarFixed("front", true);
+            calib.setLidarPose("front", front_lidar_pose);
+            if (root["fix_front"].as<bool>()){
+                calib.setLidarFixed("front", true);
+            }else {
+                calib.setRootLidarHeight(root["front_lidar_height"].as<double>());
+            }
 
             pcl::Indices indices;
             CloudPtr sectored_left_pcd = pcdSector<PointT>(calib["left"]->source_pcds["bag_front"], -180, 0, indices);
@@ -556,7 +568,13 @@ int main(int argc, char* argv[])
                 calib["right"]->push_back("bag_front", pcd_lst[0][2]);
                 calib["back"]->push_back("bag_front", pcd_lst[0][3]);
             }
-            if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end()){
+            if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end() &&
+                std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_front.bag") == bag_file_lst.end()){
+                calib["front"]->push_back("bag_back", pcd_lst[0][0]);
+                calib["left"]->push_back("bag_back", pcd_lst[0][1]);
+                calib["right"]->push_back("bag_back", pcd_lst[0][2]);
+                calib["back"]->push_back("bag_back", pcd_lst[0][3]);
+            }else if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end()){
                 calib["front"]->push_back("bag_back", pcd_lst[1][0]);
                 calib["left"]->push_back("bag_back", pcd_lst[1][1]);
                 calib["right"]->push_back("bag_back", pcd_lst[1][2]);
@@ -805,9 +823,9 @@ int main(int argc, char* argv[])
             calib["back"]->push_back("bag_back", pcd_lst[1][2]);
 
             Eigen::Matrix4d left_lidar_pose = getPrePose("left_pose");
-            calib.setLidarPose("left", left_lidar_pose);
             calib.setRootLidar("left");
             calib.setRootLidarHeight(root["front_lidar_height"].as<double>());
+            calib.setLidarPose("left", left_lidar_pose);
             calib.setLidarFixed("left", true);
 
             pcl::Indices indices;
@@ -856,7 +874,12 @@ int main(int argc, char* argv[])
                 calib["right"]->push_back("bag_front", pcd_lst[0][1]);
                 calib["back"]->push_back("bag_front", pcd_lst[0][2]);
             }
-            if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end()){
+            if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end() &&
+                std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_front.bag") == bag_file_lst.end()){
+                calib["left"]->push_back("bag_back", pcd_lst[0][0]);
+                calib["right"]->push_back("bag_back", pcd_lst[0][1]);
+                calib["back"]->push_back("bag_back", pcd_lst[0][2]);
+            }else if (std::find(bag_file_lst.begin(), bag_file_lst.end(), "lidar_back.bag") != bag_file_lst.end()){
                 calib["left"]->push_back("bag_back", pcd_lst[1][0]);
                 calib["right"]->push_back("bag_back", pcd_lst[1][1]);
                 calib["back"]->push_back("bag_back", pcd_lst[1][2]);
