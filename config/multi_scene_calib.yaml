@@ -31,7 +31,7 @@ lidar_topics: &lidar_topics_all [*topic0, *topic1, *topic2, *topic3]
 front_lidar_height: 1.2
 
 # 调整雷达的方案, 需要填写下面的所有的位置,要调整的雷达不固定
-fix_front: false
+fix_front: true
 front_pose: [
         -0.00622758,    -1.00003, -0.00089629,   -0.207866, 
         0.997189, -0.00621222,  -0.0746006,     7.58107, 
