@@ -60,6 +60,8 @@ In our demo setup:
 
 This mode recalibrates **all LiDARs relative to the front LiDAR**.
 
+- set `fix_front`(root lidar) in config file be `true`.
+
 ```bash
 roslaunch ml_calib multi_scene_calib.launch recalibration_mode:=1 bag_folder_path:=<folder>
 ```

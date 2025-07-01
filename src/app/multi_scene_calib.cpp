@@ -531,8 +531,8 @@ int main(int argc, char* argv[])
             *merged_front += *calib["left"]->getPCDInGlobal("bag_front");
             *merged_front += *calib["right"]->getPCDInGlobal("bag_front");
 
-            pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test5.pcd", *merged_front);
-            pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test0.pcd", *merged_back);
+            // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test5.pcd", *merged_front);
+            // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test0.pcd", *merged_back);
 
             pcl::transformPointCloud(*merged_back, *merged_back, front_lidar_pose.inverse().cast<float>());  
 
@@ -845,7 +845,7 @@ int main(int argc, char* argv[])
             pcl::transformPointCloud(*merged_back, *merged_back, calib["left"]->getPose().inverse().cast<float>());  
             indices.clear();
             CloudPtr sectored_back = pcdSector<PointT>(merged_back, 30, 150, indices);
-            pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test4.pcd", *sectored_back);
+            // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test4.pcd", *sectored_back);
 
             // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test5.pcd", *merged_back);
             

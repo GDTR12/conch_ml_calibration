@@ -59,7 +59,7 @@ source devel/setup.bash
 ### 重标定模式运行
 
 此模式用于将**所有雷达重新标定到前向雷达坐标系下**。
-
+- 需要设置 `fix_front`(根雷达)为 `true`
 ```bash
 roslaunch ml_calib multi_scene_calib.launch recalibration_mode:=1 bag_folder_path:=<folder>
 ```
