@@ -7,8 +7,7 @@
 
 namespace ml_calib
 {
-
-class GroundJointOptFactor : public gtsam::NoiseModelFactor3<gtsam::Vector3, gtsam::Vector3>
+class GroundJointOptFactor : public gtsam::NoiseModelFactor2<gtsam::Vector3, gtsam::Vector3>
 {
 private:
     gtsam::Vector3 p_, p1_;
@@ -21,7 +20,7 @@ public:
                          gtsam::Key key1, 
                          const gtsam::SharedNoiseModel& model,
                          double factor_weight = 1)
-        : gtsam::NoiseModelFactor3<gtsam::Vector3, gtsam::Vector3>(model, key0, key1), 
+        : gtsam::NoiseModelFactor2<gtsam::Vector3, gtsam::Vector3>(model, key0, key1), 
           p_(p), p1_(p1), factor_weight_(factor_weight) {}
 
     gtsam::Vector evaluateError(const gtsam::Vector3& params, 

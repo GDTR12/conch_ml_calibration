@@ -18,7 +18,7 @@ namespace ml_calib
 
 void MLiDAR::push_back(const std::string& name, CloudPtr cloud)
 {
-    CloudPtr source_pcd = pcl::make_shared<PointCloud>();
+    CloudPtr source_pcd(new PointCloud);
     pcl::Indices indices;
     pcl::removeNaNFromPointCloud(*cloud, *source_pcd, indices);
     source_pcds[name] = source_pcd;
@@ -59,7 +59,7 @@ CloudPtr MLiDAR::getPCDInGlobal(const std::string& pcd_name)
 {
     if (source_pcds.find(pcd_name) != source_pcds.end()){
         CloudPtr pcd = source_pcds[pcd_name];
-        CloudPtr transformed_pcd = pcl::make_shared<PointCloud>();
+        CloudPtr transformed_pcd(new PointCloud);
         pcl::transformPointCloud(*pcd, *transformed_pcd, getPose().cast<float>());
         return transformed_pcd;
     }
@@ -400,14 +400,24 @@ void MLCalib::buildConstraints()
     }
     for (const auto& fixed_lidar : fixed_lidars)
     {
-        graph.add(gtsam::PriorFactor<gtsam::Pose3>(lidars[fixed_lidar]->symbol, gtsam::Pose3::Identity(), gtsam::noiseModel::Constrained::All(6)));
+        
+        #if GTSAM_VERSION_NUMERIC >= 40200
+            graph.add(gtsam::PriorFactor<gtsam::Pose3>(lidars[fixed_lidar]->symbol, gtsam::Pose3::Identity(), gtsam::noiseModel::Constrained::All(6)));
+        #else
+            graph.add(gtsam::PriorFactor<gtsam::Pose3>(lidars[fixed_lidar]->symbol, gtsam::Pose3::identity(), gtsam::noiseModel::Constrained::All(6)));
+        #endif
     }
 
     gtsam::Values initial;
     for (const auto& [lidar_name, lidar] : lidars)
     {
         if (lidar->initialized){
-            initial.insert(lidar->symbol, gtsam::Pose3::Identity());
+            #if GTSAM_VERSION_NUMERIC >= 40200
+                initial.insert(lidar->symbol, gtsam::Pose3::Identity());
+            #else
+                initial.insert(lidar->symbol, gtsam::Pose3::identity());
+            #endif
+
         }
     }
     gtsam::LevenbergMarquardtParams params;
@@ -611,7 +621,7 @@ void MLCalib::groundOpt(const std::string& lidar_name, const std::string& source
     // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test3.pcd", *pcd_tarnsformed);
     Eigen::Affine3d trans = groundOptimization(pcd_tarnsformed, lidar->ground_indices[source_name], -root_lidar_height);
     // std::cout << trans.matrix() << std::endl;
-    CloudPtr pcd_transed = pcl::make_shared<PointCloud>();
+    CloudPtr pcd_transed(new PointCloud);
     pcl::transformPointCloud(*pcd_tarnsformed, *pcd_transed, trans.matrix().cast<float>());
     // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test4.pcd", *pcd_tarnsformed);
     // std::cout << "euler: " << trans.rotation().eulerAngles(0, 1, 2 ).transpose();
@@ -645,9 +655,10 @@ void MLCalib::updateInitPose()
 
             CloudPtr target_pcd = lidar->getPCDInGlobal(leaf.source_name);
             CloudPtr source_pcd = leaf.target_lidar->source_pcds[leaf.target_name];
-            CloudPtr aligned_pcd = pcl::make_shared<PointCloud>();
+            CloudPtr aligned_pcd(new PointCloud);
             
-            reg.setInputCloud(source_pcd);
+            // reg.setInputCloud(source_pcd);
+            reg.setInputSource(source_pcd);
             reg.setInputTarget(target_pcd);
             reg.align(*aligned_pcd);
             Eigen::Matrix4f trans = reg.getFinalTransformation();

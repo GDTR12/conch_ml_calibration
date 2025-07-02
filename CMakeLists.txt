@@ -15,7 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   dynamic_reconfigure
 )
 find_package(Eigen3 REQUIRED)
-set(PCL_DIR "/usr/lib/x86_64-linux-gnu/cmake/pcl")
+# set(PCL_DIR "/usr/local/share/pcl-1.8/")
 find_package(PCL REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(GTSAM REQUIRED)

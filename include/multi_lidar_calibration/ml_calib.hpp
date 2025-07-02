@@ -3,7 +3,7 @@
 #include <gtsam/inference/Symbol.h>
 #include <memory>
 #include <pcl/io/pcd_io.h>
-#include <pcl/make_shared.h>
+#include <pcl/pcl_macros.h>
 #include <pcl/pcl_base.h>
 #include <pcl/registration/registration.h>
 #include <pcl/point_types.h>
@@ -22,6 +22,7 @@
 namespace pcl
 {
 
+using Indices = std::vector<int>;
 // typedef PointXYZ PointSource;
 // typedef PointXYZ PointTarget;
 template <typename PointSource, typename PointTarget>
@@ -46,8 +47,8 @@ protected:
 
     void computeTransformation (PointCloudSource &output, const Eigen::Matrix4f &guess) override
     {
-        pcl::PointCloud<pcl::PointXYZ>::Ptr source = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-        pcl::PointCloud<pcl::PointXYZ>::Ptr target = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+        pcl::PointCloud<pcl::PointXYZ>::Ptr source(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr target(new pcl::PointCloud<pcl::PointXYZ>);
         pcl::copyPointCloud(*this->input_, *source);
         pcl::copyPointCloud(*this->target_, *target);
         FRGresult solution = g3reg::GlobalRegistration(source, target);
@@ -83,8 +84,8 @@ class IndicedMerge
 protected:
 
     using Cloud = pcl::PointCloud<PointT>;
-    using CloudPtr = pcl::shared_ptr<Cloud>;
-    using ConstCloudPtr = pcl::shared_ptr<const Cloud>;
+    using CloudPtr = typename Cloud::Ptr;
+    using ConstCloudPtr = typename Cloud::ConstPtr;
 
 
     struct LocalPcdInfo{
@@ -113,7 +114,7 @@ public:
         *merged_cloud += *cloud;
     }
 
-    CloudPtr merged_cloud = pcl::make_shared<Cloud>();
+    CloudPtr merged_cloud = CloudPtr(new Cloud);
 
     ConstCloudPtr operator[](const std::string& name){return cloud_lst[name].cloud;}
 
@@ -151,8 +152,8 @@ namespace ml_calib
 using PointT = pcl::PointXYZI;
 using PointCloud = pcl::PointCloud<PointT>;
 using ConstCloud = const pcl::PointCloud<PointT>;
-using CloudPtr = pcl::shared_ptr<PointCloud>;
-using ConstCloudPtr = pcl::shared_ptr<const PointCloud>;
+using CloudPtr = PointCloud::Ptr;
+using ConstCloudPtr = PointCloud::ConstPtr;
 using OctreeT = pcl::octree::OctreePointCloud<PointT>;
 using KdTree = pcl::KdTreeFLANN<PointT>;
 
@@ -321,7 +322,7 @@ public:
 private:
 
     template<typename PointT>
-    double checkPlane(pcl::shared_ptr<const pcl::PointCloud<PointT>> cloud, const pcl::Indices& indices, Eigen::Vector3f& plane_normal)
+    double checkPlane(typename pcl::PointCloud<PointT>::ConstPtr cloud, const pcl::Indices& indices, Eigen::Vector3f& plane_normal)
     {
         Eigen::Vector4f centroid;
         pcl::compute3DCentroid(*cloud, indices,centroid);
