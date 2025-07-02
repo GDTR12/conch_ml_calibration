@@ -17,7 +17,7 @@
 #include <pcl/common/io.h>
 #include <pcl/common/transforms.h>
 #include <pcl/impl/point_types.hpp>
-#include <pcl/make_shared.h>
+#include <pcl/pcl_macros.h>
 #include <pcl/pcl_base.h>
 #include <pcl/pcl_macros.h>
 #include <pcl/point_cloud.h>
@@ -42,8 +42,8 @@
 
 using PointT = pcl::PointXYZI;
 using PointCloud = pcl::PointCloud<PointT>;
-using CloudPtr = pcl::shared_ptr<PointCloud>;
-using ConstCloudPtr = pcl::shared_ptr<const PointCloud>;
+using CloudPtr = PointCloud::Ptr;
+using ConstCloudPtr = PointCloud::ConstPtr;
 using OctreeT = pcl::octree::OctreePointCloud<PointT>;
 namespace fs = std::filesystem;
 
@@ -68,9 +68,9 @@ double checkPlane(pcl::shared_ptr<const pcl::PointCloud<PointT>> cloud, const pc
 } */
 
 template<typename PointT>
-pcl::shared_ptr<pcl::PointCloud<PointT>> pcdSector(pcl::shared_ptr<pcl::PointCloud<PointT>> pcd, float begin_angle, float end_angle, std::vector<int>& indices)
+typename pcl::PointCloud<PointT>::Ptr pcdSector(typename pcl::PointCloud<PointT>::Ptr pcd, float begin_angle, float end_angle, std::vector<int>& indices)
 {
-    pcl::shared_ptr<pcl::PointCloud<PointT>> ret = pcl::make_shared<pcl::PointCloud<PointT>>();
+    typename pcl::PointCloud<PointT>::Ptr ret(new pcl::PointCloud<PointT>);
 
     if (pcd.get() == nullptr) return ret;
 
@@ -93,7 +93,7 @@ pcl::shared_ptr<pcl::PointCloud<PointT>> pcdSector(pcl::shared_ptr<pcl::PointClo
 
 /* pcl::shared_ptr<pcl::PointCloud<PointT>> pcdDistanceRejectPoint(pcl::shared_ptr<pcl::PointCloud<PointT>> pcd, float begin_distance, float end_distance, std::vector<int>& indices)
 {
-    pcl::shared_ptr<pcl::PointCloud<PointT>> ret = pcl::make_shared<pcl::PointCloud<PointT>>();
+    pcl::shared_ptr<pcl::PointCloud<PointT>> ret(new pcl::PointCloud<PointT>);
     if (pcd.get() == nullptr) return ret;
     for (int i = 0; i < pcd->size(); i++)
     {
@@ -279,7 +279,7 @@ void updatePatchWorkParameters()
     patchwork_para.adaptive_seed_selection_margin = ml_calib_config.adaptive_seed_selection_margin;
 }
 
-void constructMarker(visualization_msgs::MarkerArray& mark, std::vector<ml_calib::MLiDARConstraintDetail>& details, CloudPtr pcd0, CloudPtr pcd1, pcl::shared_ptr<pcl::PointCloud<pcl::PointXYZRGBA>> intersected_pcd, int type)
+void constructMarker(visualization_msgs::MarkerArray& mark, std::vector<ml_calib::MLiDARConstraintDetail>& details, CloudPtr pcd0, CloudPtr pcd1, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr intersected_pcd, int type)
 {
     int pre_id = mark.markers.size();
     for (int i = 0; i < details.size(); i++)
@@ -711,16 +711,16 @@ int main(int argc, char* argv[])
             visualization_msgs::MarkerArray marker_array_front, marker_array_back;
             visualization_msgs::MarkerArray marker_array_norm_front, marker_array_norm_back;
 
-            pcl::shared_ptr<pcl::PointCloud<pcl::PointXYZRGBA>> intersected_front_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
+            pcl::PointCloud<pcl::PointXYZRGBA>::Ptr intersected_front_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
             intersected_front_pcd->header.frame_id = "lidar";
             intersected_front_pcd->header.stamp = ros::Time::now().toNSec() / 1000;
 
-            pcl::shared_ptr<pcl::PointCloud<pcl::PointXYZRGBA>> intersected_back_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
+            pcl::PointCloud<pcl::PointXYZRGBA>::Ptr intersected_back_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
             intersected_front_pcd->header.frame_id = "lidar";
             intersected_front_pcd->header.stamp = ros::Time::now().toNSec() / 1000;
 
             sensor_msgs::PointCloud2 ground_msg;
-            CloudPtr ground_pcd = pcl::make_shared<PointCloud>();
+            CloudPtr ground_pcd(new PointCloud);
             auto add_pcd_by_indices = [](CloudPtr& source, CloudPtr& target, std::set<int>& indices){
                 for (int idx : indices)
                     source->push_back(target->at(idx));
@@ -991,16 +991,16 @@ int main(int argc, char* argv[])
             visualization_msgs::MarkerArray marker_array_front, marker_array_back;
             visualization_msgs::MarkerArray marker_array_norm_front, marker_array_norm_back;
 
-            pcl::shared_ptr<pcl::PointCloud<pcl::PointXYZRGBA>> intersected_front_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
+            pcl::PointCloud<pcl::PointXYZRGBA>::Ptr intersected_front_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
             intersected_front_pcd->header.frame_id = "lidar";
             intersected_front_pcd->header.stamp = ros::Time::now().toNSec() / 1000;
 
-            pcl::shared_ptr<pcl::PointCloud<pcl::PointXYZRGBA>> intersected_back_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
+            pcl::PointCloud<pcl::PointXYZRGBA>::Ptr intersected_back_pcd(new pcl::PointCloud<pcl::PointXYZRGBA>());
             intersected_front_pcd->header.frame_id = "lidar";
             intersected_front_pcd->header.stamp = ros::Time::now().toNSec() / 1000;
 
             sensor_msgs::PointCloud2 ground_msg;
-            CloudPtr ground_pcd = pcl::make_shared<PointCloud>();
+            CloudPtr ground_pcd(new PointCloud);
             auto add_pcd_by_indices = [](CloudPtr& source, CloudPtr& target, std::set<int>& indices){
                 for (int idx : indices)
                     source->push_back(target->at(idx));
