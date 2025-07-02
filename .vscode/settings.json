@@ -74,5 +74,6 @@
     },
     "clangd.arguments": [
         "--compile-commands-dir=${workspaceFolder}/../../build",
-    ]
+    ],
+    "clangd.path": "/root/workspace/tmp/clangd_19.1.2/bin/clangd"
 }

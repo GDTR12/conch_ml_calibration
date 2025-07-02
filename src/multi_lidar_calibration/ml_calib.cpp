@@ -400,14 +400,24 @@ void MLCalib::buildConstraints()
     }
     for (const auto& fixed_lidar : fixed_lidars)
     {
-        graph.add(gtsam::PriorFactor<gtsam::Pose3>(lidars[fixed_lidar]->symbol, gtsam::Pose3::Identity(), gtsam::noiseModel::Constrained::All(6)));
+        
+        #if GTSAM_VERSION_NUMERIC >= 40200
+            graph.add(gtsam::PriorFactor<gtsam::Pose3>(lidars[fixed_lidar]->symbol, gtsam::Pose3::Identity(), gtsam::noiseModel::Constrained::All(6)));
+        #else
+            graph.add(gtsam::PriorFactor<gtsam::Pose3>(lidars[fixed_lidar]->symbol, gtsam::Pose3::identity(), gtsam::noiseModel::Constrained::All(6)));
+        #endif
     }
 
     gtsam::Values initial;
     for (const auto& [lidar_name, lidar] : lidars)
     {
         if (lidar->initialized){
-            initial.insert(lidar->symbol, gtsam::Pose3::Identity());
+            #if GTSAM_VERSION_NUMERIC >= 40200
+                initial.insert(lidar->symbol, gtsam::Pose3::Identity());
+            #else
+                initial.insert(lidar->symbol, gtsam::Pose3::identity());
+            #endif
+
         }
     }
     gtsam::LevenbergMarquardtParams params;

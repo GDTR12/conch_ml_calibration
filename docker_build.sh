@@ -1,0 +1,2 @@
+docker pull openalta/ml_calibration:latest
+docker run -it -v /dev:/dev --network=host --name "ml_calib" -v $PWD:/root/workspace/conch_ml_calib/src/conch_ml_calibration -v /tmp/.X11-unix:/tmp/.X11-unix -e DISPLAY=$DISPLAY openalta/ml_calibration:latest bash

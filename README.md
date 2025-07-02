@@ -8,7 +8,7 @@ This method introduces an initial-guess-free automatic calibration algorithm for
 
 ---
 
-## Dependencies
+## 1. Dependencies
 
 ### 1.1 Ubuntu & ROS
 
@@ -19,12 +19,16 @@ This method introduces an initial-guess-free automatic calibration algorithm for
 ### 1.2 Required Packages
 
 - **Eigen** ≥ 3.3.4  
-- **PCL** (Point Cloud Library)  
+- **PCL** (Point Cloud Library) ≥ 1.8
 - **YAML-CPP**
 
 ---
 
-## Build
+## 2. Build
+
+
+
+### 2.1 Build form source
 
 ```bash
 mkdir -p catkin_ws/src
@@ -38,7 +42,33 @@ catkin_make
 
 ---
 
-## Run
+
+### 2.2. Build with Docker
+
+```bash
+mkdir -p catkin_ws/src
+cd catkin_ws/src
+git clone https://github.com/GDTR12/conch_ml_calibration.git
+cd conch_ml_calibration
+git submodule update --init --recursive
+cd ..
+```
+
+**Options 1**: Build from base image of ros-noetic
+```bash
+bash ./docker_build_base.sh <your_processes_number>
+catkin_make
+```
+
+**Options 2**: Build from our image on dockerhub
+```bash
+bash ./docker_build.sh
+catkin_make
+```
+
+---
+
+## 3. Run
 
 ```bash
 source devel/setup.bash
@@ -56,7 +86,7 @@ In our demo setup:
 
 ---
 
-### Run in Recalibration Mode
+### 3.1. Run in Recalibration Mode
 
 This mode recalibrates **all LiDARs relative to the front LiDAR**.
 
@@ -70,7 +100,7 @@ roslaunch ml_calib multi_scene_calib.launch recalibration_mode:=1 bag_folder_pat
 
 ---
 
-### Run in Fixed-LiDAR Mode
+### 3.2. Run in Fixed-LiDAR Mode
 
 This mode is for systems **already calibrated**, where **only some LiDARs have changed position** and require re-calibration.
 
@@ -83,7 +113,7 @@ roslaunch ml_calib multi_scene_calib.launch recalibration_mode:=0 bag_folder_pat
 
 ---
 
-## Fine-tuning in Challenging Scenes
+## 4. Fine-tuning in Challenging Scenes
 
 The system may not always work reliably in all scenarios. To improve robustness, several ROS parameters are exposed for tuning:
 
@@ -92,7 +122,7 @@ The system may not always work reliably in all scenarios. To improve robustness,
 - `front_lidarConfig`: configure the extrinsic parameters of the front/root LiDAR relative to the map.
 - `optimizationConfig`: optimization settings to improve calibration quality:
 
-### Key Parameters
+### 4.1. Key Parameters
 
 - **`use_ground_optimization`**  
   Use only ground constraints for optimization.
@@ -111,13 +141,13 @@ The system may not always work reliably in all scenarios. To improve robustness,
 
 ---
 
-### Troubleshooting Tips
+### 4.2 Troubleshooting Tips
 
 - If **plane fitting fails**, it may be due to a **low `plane_threshold`**. Try increasing it to allow the algorithm to converge, then reduce it later for better precision.
 
 - If **ground constraints** yield poor results, enable `use_ground_optimization` and try **reducing `xxx_lidar_ground_radius`** (e.g., `front_lidar_ground_radius`) to improve convergence.
 
-# Knowledgement
+# 5. Knowledgement
 
 - [G3Reg](https://github.com/HKUST-Aerial-Robotics/G3Reg.git) The method refers the initial value for joint optimization.
 - [Patchwokpp](https://github.com/url-kaist/patchwork-plusplus.git) The method refers the method for ground extraction.

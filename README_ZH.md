@@ -8,7 +8,7 @@ Lanuage: [EN](README.md) | [中文](README_ZH.md)
 
 ---
 
-## 依赖项
+## 1. 依赖项
 
 ### 1.1 Ubuntu 与 ROS
 
@@ -19,12 +19,14 @@ Lanuage: [EN](README.md) | [中文](README_ZH.md)
 ### 1.2 所需软件包
 
 - **Eigen** ≥ 3.3.4  
-- **PCL**（点云库）  
+- **PCL**（点云库） ≥ 1.10
 - **YAML-CPP**
 
 ---
 
-## 编译方法
+## 2. 编译
+
+### 2.1. 为你自己的环境编译
 
 ```bash
 mkdir -p catkin_ws/src
@@ -36,9 +38,32 @@ cd ../..
 catkin_make
 ```
 
+### 2.2. 从Docker构建
+
+```bash
+mkdir -p catkin_ws/src
+cd catkin_ws/src
+git clone https://github.com/GDTR12/conch_ml_calibration.git
+cd conch_ml_calibration
+git submodule update --init --recursive
+cd ..
+```
+
+**Options 1**: Build from base image of ros-noetic
+```bash
+bash ./docker_build_base.sh <your_processes_number>
+catkin_make
+```
+
+**Options 2**: Build from our image on dockerhub
+```bash
+bash ./docker_build.sh
+catkin_make
+```
+
 ---
 
-## 运行方法
+## 3. 运行
 
 ```bash
 source devel/setup.bash
@@ -56,7 +81,7 @@ source devel/setup.bash
 
 ---
 
-### 重标定模式运行
+### 3.1. 重标定模式运行
 
 此模式用于将**所有雷达重新标定到前向雷达坐标系下**。
 - 需要设置 `fix_front`(根雷达)为 `true`
@@ -68,7 +93,7 @@ roslaunch ml_calib multi_scene_calib.launch recalibration_mode:=1 bag_folder_pat
 
 ---
 
-### 已标定系统修正模式运行
+### 3.2. 已标定系统修正模式运行
 
 此模式适用于系统**已经完成标定**，但由于某些原因部分激光雷达位置发生变化，需要重新标定其外参。
 
@@ -81,7 +106,7 @@ roslaunch ml_calib multi_scene_calib.launch recalibration_mode:=0 bag_folder_pat
 
 ---
 
-## 复杂场景下的参数调整
+## 4. 复杂场景下的参数调整
 
 该系统在复杂场景下可能无法稳定工作，我们提供了一系列 ROS 参数用于调节：
 
@@ -90,7 +115,7 @@ roslaunch ml_calib multi_scene_calib.launch recalibration_mode:=0 bag_folder_pat
 - `front_lidarConfig`：配置前向（根）雷达到地图的外参；
 - `optimizationConfig`：控制优化过程的相关参数。
 
-### 核心参数说明：
+### 4.1. 核心参数说明：
 
 - **`use_ground_optimization`**  
   启用仅使用地面约束进行优化（忽略其他约束）。
@@ -109,12 +134,12 @@ roslaunch ml_calib multi_scene_calib.launch recalibration_mode:=0 bag_folder_pat
 
 ---
 
-### 故障排查建议
+### 4.2. 故障排查建议
 
 - 若**平面拟合失败**，可能是 `plane_threshold` 设置过低。建议**先提高阈值等待算法收敛**，再逐步降低以提升精度。
 
 - 若**地面约束优化效果不佳**，可以尝试启用 `use_ground_optimization`，并**逐步缩小 `xxx_lidar_ground_radius`**（如 `front_lidar_ground_radius`）直到收敛为止。
 
-# 参考
+# 5. 参考
 - [G3Reg](https://github.com/HKUST-Aerial-Robotics/G3Reg.git): 该方法提供了联合优化所需的初始值参考。
 - [Patchworkpp](https://github.com/url-kaist/patchwork-plusplus.git): 该方法提供了用于地面提取的技术参考。
