@@ -2,45 +2,76 @@ FROM osrf/ros:noetic-desktop
 
 ARG PROC_NUM=2
 
-RUN apt update && apt install git libflann-dev bison flex ros-noetic-pcl-conversions -y
+RUN set -eux && \
+    apt update && \ 
+    apt install -y git \
+                   libflann-dev \
+                   bison \
+                   flex \
+                   ros-noetic-pcl-conversions && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root/workspace/tmp
 
-RUN git clone https://github.com/PointCloudLibrary/pcl.git -b pcl-1.10.0
+RUN set -eux && \
+    git clone https://github.com/PointCloudLibrary/pcl.git -b pcl-1.10.0 && \
+    mkdir -p /root/workspace/tmp/pcl/build && \
+    cd /root/workspace/tmp/pcl/build && \
+    cmake .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/root/workspace/packages_install \
+          -DGTSAM_USE_SYSTEM_EIGEN=ON \
+          -DBUILD_visualization=ON \
+          -DPCL_ENABLE_AVX=OFF \
+          -DPCL_ENABLE_SSE=OFF \
+          -DPCL_ENABLE_MARCHNATIVE=OFF && \
+    make -j$PROC_NUM && \ 
+    make install && \
+    cd /root/workspace/tmp && \
+    rm -rf /root/workspace/tmp/pcl
 
-WORKDIR /root/workspace/tmp/pcl/build
+RUN set -eux && \
+    git clone https://github.com/borglab/gtsam.git -b 4.2 && \
+    mkdir -p /root/workspace/tmp/gtsam/build && \
+    cd /root/workspace/tmp/gtsam/build && \
+    cmake .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/root/workspace/packages_install && \
+    make -j$PROC_NUM && \
+    make install && \
+    cd /root/workspace/tmp && \
+    rm -rf /root/workspace/tmp/gtsam
 
-RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/root/workspace/packages_install -DGTSAM_USE_SYSTEM_EIGEN=ON -DBUILD_visualization=ON -DPCL_ENABLE_AVX=OFF -DPCL_ENABLE_SSE=OFF -DPCL_ENABLE_MARCHNATIVE=OFF && make -j$PROC_NUM && make install
+RUN set -eux && \
+    git clone https://github.com/google/glog.git -b v0.6.0 && \
+    mkdir -p /root/workspace/tmp/glog/build && \
+    cd /root/workspace/tmp/glog/build && \
+    cmake .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/root/workspace/packages_install \
+          -DBUILD_SHARED_LIBS=ON && \
+    make -j$PROC_NUM && \
+    make install && \
+    cd /root/workspace/tmp && \
+    rm -rf /root/workspace/tmp/glog
 
-WORKDIR /root/workspace/tmp/
-
-RUN git clone https://github.com/borglab/gtsam.git -b 4.2
-
-WORKDIR /root/workspace/tmp/gtsam/build
-
-RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/root/workspace/packages_install && make -j$PROC_NUM && make install
-
-WORKDIR /root/workspace/tmp/
-
-RUN git clone https://github.com/google/glog.git -b v0.6.0
-
-WORKDIR /root/workspace/tmp/glog/build
-
-RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/root/workspace/packages_install -DBUILD_SHARED_LIBS=ON && make -j$PROC_NUM && make install
-
-WORKDIR /root/workspace/tmp/
-
-RUN git clone https://github.com/igraph/igraph.git -b 0.9.9
-
-WORKDIR /root/workspace/tmp/igraph/build
-
-RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/root/workspace/packages_install && make -j$PROC_NUM && make install
+RUN set -eux && \
+    git clone https://github.com/igraph/igraph.git -b 0.9.9 && \
+    mkdir -p /root/workspace/tmp/igraph/build && \
+    cd /root/workspace/tmp/igraph/build && \
+    cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/root/workspace/packages_install && \
+    make -j$PROC_NUM && \
+    make install &&\
+    cd /root/workspace/tmp && \
+    rm -rf /root/workspace/tmp/igraph
 
 ENV CMAKE_PREFIX_PATH=/root/workspace/packages_install
 
-RUN rm -rf /root/workspace/tmp
-
-RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc && echo "export DISABLE_ROS1_EOL_WARNINGS=ON" >> ~/.bashrc
+RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc && \
+    echo "export DISABLE_ROS1_EOL_WARNINGS=ON" >> ~/.bashrc
 
 WORKDIR /root/workspace/conch_ml_calib/
 
