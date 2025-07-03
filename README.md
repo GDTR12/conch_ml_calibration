@@ -51,7 +51,6 @@ cd catkin_ws/src
 git clone https://github.com/GDTR12/conch_ml_calibration.git
 cd conch_ml_calibration
 git submodule update --init --recursive
-cd ..
 ```
 
 **Options 1**: Build from base image of ros-noetic
