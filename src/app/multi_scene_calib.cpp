@@ -535,8 +535,11 @@ int main(int argc, char* argv[])
             // pcl::io::savePCDFile("/root/workspace/ros1/ml_bag/test0.pcd", *merged_back);
 
             pcl::transformPointCloud(*merged_back, *merged_back, front_lidar_pose.inverse().cast<float>());  
+            indices.clear();
+            CloudPtr merged_back_sectored = pcdSector<PointT>(merged_back, -225 - 10, -135 + 10, indices);
+            // pcl::io::savePCDFile("/root/workspace/conch_ml_calib/src/conch_ml_calibration/aaabbb/test5.pcd", *merged_back_sectored);
 
-            calib["front"]->push_back("merged_back", merged_back);
+            calib["front"]->push_back("merged_back", merged_back_sectored);
             calib["front"]->addTargetLeaf("merged_back", calib["back"], "bag_back");
             calib.updateInitPose();
 
