@@ -33,8 +33,8 @@ This method introduces an initial-guess-free automatic calibration algorithm for
 ```bash
 mkdir -p catkin_ws/src
 cd catkin_ws/src
-git clone https://github.com/GDTR12/conch_ml_calibration.git
-cd conch_ml_calibration
+git clone https://github.com/GDTR12/ml_calibration.git
+cd ml_calibration
 git submodule update --init --recursive
 cd ../..
 catkin_make
@@ -48,8 +48,8 @@ catkin_make
 ```bash
 mkdir -p catkin_ws/src
 cd catkin_ws/src
-git clone https://github.com/GDTR12/conch_ml_calibration.git
-cd conch_ml_calibration
+git clone https://github.com/GDTR12/ml_calibration.git
+cd ml_calibration
 git submodule update --init --recursive
 ```
 
